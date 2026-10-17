@@ -125,6 +125,41 @@ select, .compose button {
 .fm-ctl input[type="range"] { width: 100%; accent-color: var(--accent); }
 .fm-ctl .val { color: var(--text); }
 
+.fx-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 8px 16px;
+  background: #0d1118;
+  border-bottom: 1px solid var(--line);
+}
+.fx-strip label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--dim);
+  font-size: 11px;
+}
+.fx-strip input[type="range"] { width: 88px; accent-color: var(--accent); }
+.fx-strip input[type="number"] {
+  width: 52px;
+  background: #0b0e14;
+  color: var(--text);
+  border: 1px solid var(--line);
+  font: inherit;
+  padding: 2px 4px;
+}
+.fx-strip select {
+  background: #1c2433;
+  color: var(--text);
+  border: 1px solid var(--line);
+  font: inherit;
+  padding: 2px 4px;
+}
+#fx-channel { color: var(--inst); font-size: 11px; letter-spacing: 0.06em; }
+.cell .fx { color: var(--warn); }
+
 .stage {
   flex: 1;
   display: grid;

@@ -51,6 +51,28 @@ export function normalizeChannelFx(fx) {
   return out;
 }
 
+/**
+ * Pattern effect column. 0 leaves the strip alone, including on a rest.
+ * 6 is a row count (1–16), not a 0–255 curve. 0 for that column is ignored.
+ * fmDepth, opRatio, and feedback are preset fields, not effect numbers.
+ */
+export function applyCellFx(fx, effect, param) {
+  const next = normalizeChannelFx(fx);
+  const code = Number(effect) || 0;
+  if (!code) return next;
+  const p = clamp(param, 0, 255, 0);
+  if (code === 1) next.cutoff = 80 * (18000 / 80) ** (p / 255);
+  else if (code === 2) next.resonance = 0.5 + (p / 255) * 17.5;
+  else if (code === 3) next.drive = p / 255;
+  else if (code === 4) next.fxWet = p / 255;
+  else if (code === 5) next.delayFeedback = (p / 255) * 0.85;
+  else if (code === 6) {
+    if (p >= 1 && p <= 16) next.delayTime = p;
+  } else if (code === 7) next.reverbSend = p / 255;
+  else if (code === 8) next.filterType = p === 0 ? "lowpass" : "highpass";
+  return next;
+}
+
 function catalogList(catalog) {
   if (Array.isArray(catalog)) return catalog;
   if (Array.isArray(catalog?.samples)) return catalog.samples;

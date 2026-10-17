@@ -72,9 +72,9 @@ and a new pitch retriggers inside the worklet. The kit sample id stays in
 the cell. Sample channels, including the hat mute group, are unchanged. An
 FM channel does not join that mute group.
 
-`channelFx.cutoff` and `channelFx.resonance` are a lowpass on a layer voice.
-`drive` and `fxWet` are stored and not heard. There is no per-channel DSP
-strip yet.
+`channelFx` is the per-channel strip. A layer's cutoff and resonance are
+heard on that channel. Drum channels start from the neutral defaults below
+until a slider or a cell command moves them.
 
 ### Grammar
 
@@ -188,9 +188,10 @@ FM-assigned drum channel does not cut before `noteOn`. A rest on that
 channel posts nothing. The cut is stamped with
 `currentTime` when the row is scheduled, so a stolen sample can start fading
 up to one lookahead early. `noteOn` and `noteOff` use the row time itself.
-`SampleVoice` is the drum implementation of this interface. Pattern commands
-do not change it. Existing songs have no `===` cells, so drum playback is
-unchanged.
+`SampleVoice` is the drum implementation of this interface. Pattern effect
+commands automate the channel strip after the voice. They do not change
+`SampleVoice`. Existing songs have no `===` cells and no effect commands, so
+drum playback is unchanged.
 
 ## FM voice
 
@@ -224,7 +225,8 @@ that channel's voice.
 
 Presets: E-Piano, Bell, FM Bass, Pluck, Lead, Pad. Edits on this panel last
 until you pick another preset. They do not edit a layer that is already in
-the pattern. Stable control ids, for the later pattern commands:
+the pattern. These ids edit the preset. Pattern commands do not retune
+operators. `fmDepth`, `opRatio`, and `feedback` stay here:
 
 | id | meaning |
 |----|---------|
@@ -233,6 +235,55 @@ the pattern. Stable control ids, for the later pattern commands:
 | `velSens` | how much velocity scales the output |
 | `opRatio`, `opDetune`, `opAttack`, `opDecay`, `opSustain`, `opRelease`, `opLevel` | modulator |
 | `carRatio`, `carDetune`, `carAttack`, `carDecay`, `carSustain`, `carRelease`, `carLevel` | carrier |
+
+## Channel strip
+
+Each channel builds one strip the first time audio starts, and reuses it.
+Sample voices and FM voices on that channel both feed it. The FM panel
+**PING** voice goes to the master, after the strips. Preview still uses the
+bass channel's voice, so it passes through the bass strip. At the defaults
+that strip is the same level as the dry sample.
+
+```
+voice → filter → saturation → dry / delay → channel output → master → limiter
+                            ↘ reverb send → one shared convolver → master
+```
+
+| parameter | default | heard as |
+|-----------|---------|----------|
+| `filterType` | `lowpass` | lowpass or highpass. Changing type is immediate |
+| `cutoff` | 18000 Hz | resonant filter. Slider and commands ramp in about 5 ms |
+| `resonance` | 0.707 | filter Q |
+| `drive` | 0 | clean gain `1 - drive`, plus `drive * 6` into a tanh waveshaper (`oversample: "4x"`) |
+| `fxWet` | 0 | delay wet. Dry gain is `1 - fxWet` |
+| `delayFeedback` | 0.35 | delay feedback, capped at 0.85. Silent while `fxWet` is 0 |
+| `delayTime` | 2 rows | `rows * (15 / bpm)` seconds, clamped to 0.01–1.9 s. `song.speed` is still unread |
+| `reverbSend` | 0 | send into one generated 1.2 s impulse |
+
+The master limiter is a compressor at 0 dBFS, knee 0, ratio 20, attack 3 ms,
+release 80 ms. It does not reduce a signal that stays under 0 dBFS. Chorus
+and flanger are not in this strip.
+
+Cell columns `effect` and `param` write the strip when the row is scheduled.
+`effect` 0 does nothing, including on a rest, so empty rows can still
+automate. The value is stored back into `song.channelFx` and ramped at the
+row's audio time. **FX** and **PRM** edit the selected cell. The sliders edit
+the channel, not the cell.
+
+| effect | param | writes |
+|--------|-------|--------|
+| 0 | — | no change |
+| 1 | 0–255 | `cutoff = 80 * (18000 / 80) ^ (param / 255)` Hz |
+| 2 | 0–255 | `resonance = 0.5 + (param / 255) * 17.5` |
+| 3 | 0–255 | `drive = param / 255` |
+| 4 | 0–255 | `fxWet = param / 255` |
+| 5 | 0–255 | `delayFeedback = (param / 255) * 0.85` |
+| 6 | 1–16 | `delayTime` in rows. 0 is ignored. This is not a 0–255 curve |
+| 7 | 0–255 | `reverbSend = param / 255` |
+| 8 | 0 or other | `filterType` lowpass, or highpass when param is not 0 |
+
+Live control ids: `cutoff`, `resonance`, `drive`, `fxWet`, `delayFeedback`,
+`delayTime`, `filterType`, `reverbSend`, `cell-effect`, `cell-param`.
 
 ## LLM nodes
 

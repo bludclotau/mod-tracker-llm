@@ -4,10 +4,13 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
 import { resolveSound } from "./audio/layer.js";
 import {
   SONG_VERSION,
+  applyCellFx,
+  defaultChannelFx,
   migrateSong,
   normalizeChannelFx,
   resolveCatalogSample,
 } from "./audio/instruments.js";
+import { ChannelStrip, createMasterChain } from "./audio/dsp-strip.js";
 
 /* MOD Tracker LLM — pattern editor + Web Audio player + Dolphin compose. */
 (() => {
@@ -58,6 +61,10 @@ import {
     layerVoices: {},
     channelFm: {},
     instrumentSync: false,
+    strips: null,
+    fxBus: null,
+    limiter: null,
+    fxSync: false,
   };
 
   const FM_GLOBALS = [
@@ -108,9 +115,12 @@ import {
     };
   }
 
+  function currentBpm() {
+    return Number($("bpm").value) || state.song?.bpm || 90;
+  }
+
   function secondsPerRow() {
-    const bpm = Number($("bpm").value) || state.song?.bpm || 90;
-    return 15 / bpm;
+    return 15 / currentBpm();
   }
 
   async function ensureAudio() {
@@ -119,13 +129,58 @@ import {
       return state.ctx;
     }
     const ctx = new AudioContext();
-    const master = ctx.createGain();
-    master.gain.value = Number($("master").value) / 100;
-    master.connect(ctx.destination);
+    const bus = createMasterChain(ctx);
+    bus.master.gain.setValueAtTime(Number($("master").value) / 100, ctx.currentTime);
     state.ctx = ctx;
-    state.master = master;
-    state.voices = Array.from({ length: 8 }, () => new SampleVoice(ctx, master));
+    state.master = bus.master;
+    state.limiter = bus.limiter;
+    state.fxBus = bus;
+    state.strips = {};
+    for (let ch = 0; ch < 8; ch++) ensureStrip(ch, state.song?.channelFx?.[ch]);
+    state.voices = Array.from({ length: 8 }, (_, ch) => new SampleVoice(ctx, state.strips[ch].input));
     return ctx;
+  }
+
+  function ensureStrip(ch, fx) {
+    if (!state.strips) state.strips = {};
+    if (state.strips[ch]) return state.strips[ch];
+    const strip = new ChannelStrip(state.ctx, state.master, state.fxBus);
+    state.strips[ch] = strip;
+    strip.setFx(normalizeChannelFx(fx), state.ctx.currentTime, currentBpm(), true);
+    return strip;
+  }
+
+  function resetStripsForSong() {
+    if (!state.ctx || !state.strips) return;
+    const t = state.ctx.currentTime;
+    const bpm = currentBpm();
+    for (const key of Object.keys(state.strips)) {
+      const ch = Number(key);
+      if (ch >= 8) {
+        state.strips[ch].disconnect();
+        delete state.strips[ch];
+        continue;
+      }
+      state.strips[ch].setFx(normalizeChannelFx(state.song?.channelFx?.[ch]), t, bpm, true);
+    }
+  }
+
+  function dropStrip(ch) {
+    const strip = state.strips?.[ch];
+    if (!strip) return;
+    strip.disconnect();
+    delete state.strips[ch];
+  }
+
+  function reindexStrips(removedCh) {
+    if (!state.strips || removedCh < 8) return;
+    const next = {};
+    for (const [key, strip] of Object.entries(state.strips)) {
+      const n = Number(key);
+      if (n < removedCh) next[n] = strip;
+      else if (n > removedCh) next[n - 1] = strip;
+    }
+    state.strips = next;
   }
 
   async function decodeSample(sample) {
@@ -221,6 +276,7 @@ import {
       const row = state.playRow;
       for (let ch = 0; ch < width; ch++) {
         const cell = pat.data[ch][row];
+        if (cell?.effect) applyRowFx(cell, state.nextTime, ch);
         if (ch < 8 && channelFmId(ch)) playChannelFm(cell, state.nextTime, ch);
         else if (ch < 8) playCell(cell, state.nextTime, ch, ROLES[ch]);
         else playLayerCell(cell, state.nextTime, ch);
@@ -321,6 +377,8 @@ import {
     renderGrid();
     highlightKit();
     syncChannelInstrument();
+    resetStripsForSong();
+    paintStrip();
   }
 
   function renderSamples() {
@@ -439,14 +497,19 @@ import {
   }
 
   function renderCell(cell) {
+    let body;
     if (isNoteOff(cell)) {
-      return `<span class="n off">===</span> <span class="s">--</span> <span class="v">--</span>`;
+      body = `<span class="n off">===</span> <span class="s">--</span> <span class="v">--</span>`;
+    } else if (!cell?.note && !cell?.sample) {
+      body = "--- -- --";
+    } else {
+      const n = cell.note || "---";
+      const s = cell.sample ? hex2(cell.sample) : "--";
+      const v = cell.note || cell.sample ? hex2(cell.volume || 64) : "--";
+      body = `<span class="n">${n}</span> <span class="s">${s}</span> <span class="v">${v}</span>`;
     }
-    if (!cell?.note && !cell?.sample) return "--- -- --";
-    const n = cell.note || "---";
-    const s = cell.sample ? hex2(cell.sample) : "--";
-    const v = cell.note || cell.sample ? hex2(cell.volume || 64) : "--";
-    return `<span class="n">${n}</span> <span class="s">${s}</span> <span class="v">${v}</span>`;
+    if (cell?.effect) body += ` <span class="fx">${cell.effect}:${cell.param || 0}</span>`;
+    return body;
   }
 
   function paintCell(r, c) {
@@ -465,6 +528,7 @@ import {
     el?.classList.add("sel");
     el?.scrollIntoView({ block: "nearest" });
     syncChannelInstrument();
+    paintStrip();
   }
 
   function putNote(midi) {
@@ -756,7 +820,6 @@ import {
       slot.dropped = true;
       if (t != null) slot.voice.cut(t);
       slot.voice.node?.disconnect();
-      slot.filter?.disconnect();
     }
     state.layerVoices = {};
   }
@@ -767,7 +830,6 @@ import {
     slot.dropped = true;
     if (state.ctx) slot.voice.cut(state.ctx.currentTime);
     slot.voice.node?.disconnect();
-    slot.filter?.disconnect();
     delete state.layerVoices[ch];
   }
 
@@ -779,20 +841,13 @@ import {
     await ensureAudio();
     const inst = (state.song.instruments || []).find((item) => item.id === layer.instrumentId);
     if (!inst) return null;
-    const fx = state.song.channelFx?.[ch] || {};
-    const filter = state.ctx.createBiquadFilter();
-    filter.type = "lowpass";
-    const now = state.ctx.currentTime;
-    filter.frequency.setValueAtTime(Number(fx.cutoff) || 3400, now);
-    filter.Q.setValueAtTime(Number(fx.resonance) || 0.7, now);
-    filter.connect(state.master);
-    const voice = new FMVoice(state.ctx, filter);
+    const strip = ensureStrip(ch, state.song.channelFx?.[ch]);
+    const voice = new FMVoice(state.ctx, strip.input);
     voice.setPreset(resolveSound(inst));
-    const slot = { voice, filter, ready: null, dropped: false };
+    const slot = { voice, ready: null, dropped: false };
     slot.ready = voice.load().then(() => {
       if (slot.dropped) {
         voice.node?.disconnect();
-        filter.disconnect();
         return null;
       }
       return slot;
@@ -880,6 +935,7 @@ import {
     const layer = song.layers?.[index];
     if (!layer || !song.patterns[0].data[ch]) return;
     dropLayerVoice(ch);
+    dropStrip(ch);
     song.layers.splice(index, 1);
     song.patterns[0].data.splice(ch, 1);
     if (!song.layers.some((item) => item.instrumentId === layer.instrumentId)) {
@@ -899,6 +955,7 @@ import {
       else if (n > ch) nextVoices[n - 1] = slot;
     }
     state.layerVoices = nextVoices;
+    reindexStrips(ch);
     song.channels = song.patterns[0].data.length;
     if (state.ch >= song.channels) state.ch = song.channels - 1;
     renderGrid();
@@ -1190,10 +1247,106 @@ import {
     }
   }
 
+  const STRIP_SLIDERS = ["cutoff", "resonance", "drive", "fxWet", "delayFeedback", "delayTime", "reverbSend"];
+
+  function applyRowFx(cell, when, ch) {
+    const prev = state.song.channelFx?.[ch] || defaultChannelFx();
+    const next = applyCellFx(prev, cell.effect, cell.param);
+    state.song.channelFx ||= {};
+    state.song.channelFx[ch] = next;
+    state.strips?.[ch]?.setFx(next, when, currentBpm(), false);
+    if (ch === state.ch) paintStrip();
+  }
+
+  function paintStrip() {
+    const type = $("filterType");
+    if (!type || !state.song) return;
+    state.fxSync = true;
+    const ch = state.ch;
+    const fx = normalizeChannelFx(state.song.channelFx?.[ch]);
+    const label = $("fx-channel");
+    if (label) label.textContent = `CH${ch + 1}`;
+    type.value = fx.filterType === "highpass" ? "highpass" : "lowpass";
+    for (const id of STRIP_SLIDERS) {
+      const el = $(id);
+      if (el) el.value = String(fx[id]);
+    }
+    const cell = state.song.patterns?.[0]?.data?.[ch]?.[state.row];
+    const effect = $("cell-effect");
+    const param = $("cell-param");
+    if (effect) effect.value = String(cell?.effect || 0);
+    if (param) param.value = String(cell?.param || 0);
+    state.fxSync = false;
+  }
+
+  function writeStripParam(key, value) {
+    if (!state.song) return;
+    const ch = state.ch;
+    state.song.channelFx ||= {};
+    const fx = normalizeChannelFx(state.song.channelFx[ch]);
+    if (key === "filterType") fx.filterType = value === "highpass" ? "highpass" : "lowpass";
+    else fx[key] = Number(value);
+    const next = normalizeChannelFx(fx);
+    state.song.channelFx[ch] = next;
+    ensureAudio().then(() => {
+      ensureStrip(ch, next).setFx(next, state.ctx.currentTime, currentBpm(), false);
+    }).catch((err) => {
+      $("status").textContent = String(err.message || err);
+      $("status").className = "status err";
+    });
+  }
+
+  function writeCellCommand() {
+    if (state.fxSync || !state.song) return;
+    const cell = state.song.patterns?.[0]?.data?.[state.ch]?.[state.row];
+    if (!cell) return;
+    cell.effect = Math.min(8, Math.max(0, Math.round(Number($("cell-effect").value) || 0)));
+    cell.param = Math.min(255, Math.max(0, Math.round(Number($("cell-param").value) || 0)));
+    paintCell(state.row, state.ch);
+  }
+
+  function setupStrip() {
+    for (const id of STRIP_SLIDERS) {
+      const el = $(id);
+      if (!el) continue;
+      el.addEventListener("input", () => {
+        if (state.fxSync) return;
+        writeStripParam(id, el.value);
+      });
+      el.addEventListener("change", () => el.blur());
+    }
+    $("filterType")?.addEventListener("change", () => {
+      if (state.fxSync) return;
+      writeStripParam("filterType", $("filterType").value);
+      $("filterType").blur();
+    });
+    for (const id of ["cell-effect", "cell-param"]) {
+      const el = $(id);
+      if (!el) continue;
+      el.addEventListener("input", writeCellCommand);
+      el.addEventListener("change", () => {
+        writeCellCommand();
+        el.blur();
+      });
+    }
+    paintStrip();
+  }
+
+  function refreshDelayTimes() {
+    if (!state.ctx || !state.strips) return;
+    const t = state.ctx.currentTime;
+    const bpm = currentBpm();
+    for (const [key, strip] of Object.entries(state.strips)) {
+      const fx = state.song?.channelFx?.[key] || defaultChannelFx();
+      strip.setDelayTime(fx.delayTime, t, bpm, false);
+    }
+  }
+
   async function boot() {
     applySong(defaultSong());
     setupFmPanel();
     setupChannelInstrument();
+    setupStrip();
     $("btn-play").addEventListener("click", play);
     $("btn-stop").addEventListener("click", stop);
     $("btn-compose").addEventListener("click", () => compose(false));
@@ -1222,6 +1375,7 @@ import {
     });
     $("bpm").addEventListener("change", () => {
       if (state.song) state.song.bpm = Number($("bpm").value) || 90;
+      refreshDelayTimes();
     });
     window.addEventListener("keydown", onKey);
 

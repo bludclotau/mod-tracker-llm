@@ -10,11 +10,13 @@
  */
 import {
   SONG_VERSION,
+  applyCellFx,
   defaultChannelFx,
   migrateSong,
   normalizeChannelFx,
   resolveCatalogSample,
 } from "../public/audio/instruments.js";
+import { delaySeconds } from "../public/audio/dsp-strip.js";
 
 let failed = 0;
 
@@ -105,6 +107,23 @@ assert(kept.instruments.length === 1, "fm assignment survives an empty catalog")
 const partial = normalizeChannelFx({ cutoff: 180, resonance: 12 });
 assert(partial.cutoff === 180 && partial.resonance === 12, "normalize keeps caller values");
 assert(partial.reverbSend === 0 && partial.delayFeedback === 0.35, "normalize fills the rest");
+
+const held = applyCellFx({ cutoff: 3400, resonance: 1.2, drive: 0, fxWet: 0 }, 0, 255);
+assert(held.cutoff === 3400 && held.drive === 0, "effect 0 does not move the strip");
+const low = applyCellFx(held, 1, 0);
+const high = applyCellFx(held, 1, 255);
+assert(low.cutoff === 80, "cutoff command floor is 80 Hz");
+assert(Math.abs(high.cutoff - 18000) < 1e-6, "cutoff command ceiling is 18000 Hz");
+assert(applyCellFx(held, 2, 0).resonance === 0.5, "resonance floor");
+assert(applyCellFx(held, 2, 255).resonance === 18, "resonance ceiling");
+assert(applyCellFx(held, 5, 255).delayFeedback === 0.85, "delay feedback cap");
+assert(applyCellFx(held, 6, 0).delayTime === defaultChannelFx().delayTime, "delay row 0 is ignored");
+assert(applyCellFx(held, 6, 4).delayTime === 4, "delay time is a row count");
+assert(applyCellFx(held, 6, 40).delayTime === defaultChannelFx().delayTime, "delay row above 16 is ignored");
+assert(applyCellFx(held, 8, 0).filterType === "lowpass", "filter 0 is lowpass");
+assert(applyCellFx(held, 8, 1).filterType === "highpass", "filter 1 is highpass");
+assert(Math.abs(delaySeconds(2, 90) - 2 * (15 / 90)) < 1e-9, "two rows at 90 bpm");
+assert(delaySeconds(16, 60) === 1.9, "delay clamps to 1.9 s");
 
 if (failed) {
   console.error(`verify-instruments ${failed} failed`);

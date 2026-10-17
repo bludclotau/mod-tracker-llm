@@ -59,6 +59,26 @@
       <div id="fm-controls"></div>
     </section>
 
+    <section class="fx-strip" id="fx-strip">
+      <span class="prompt-label">CHANNEL FX</span>
+      <span id="fx-channel">CH1</span>
+      <label>TYPE
+        <select id="filterType" aria-label="Filter type">
+          <option value="lowpass">lowpass</option>
+          <option value="highpass">highpass</option>
+        </select>
+      </label>
+      <label>CUT <input id="cutoff" type="range" min="80" max="18000" step="1" value="18000" /></label>
+      <label>RES <input id="resonance" type="range" min="0.5" max="18" step="0.01" value="0.707" /></label>
+      <label>DRIVE <input id="drive" type="range" min="0" max="1" step="0.01" value="0" /></label>
+      <label>WET <input id="fxWet" type="range" min="0" max="1" step="0.01" value="0" /></label>
+      <label>DLY FB <input id="delayFeedback" type="range" min="0" max="0.85" step="0.01" value="0.35" /></label>
+      <label>DLY <input id="delayTime" type="range" min="1" max="16" step="1" value="2" /></label>
+      <label>REV <input id="reverbSend" type="range" min="0" max="1" step="0.01" value="0" /></label>
+      <label>FX <input id="cell-effect" type="number" min="0" max="8" step="1" value="0" /></label>
+      <label>PRM <input id="cell-param" type="number" min="0" max="255" step="1" value="0" /></label>
+    </section>
+
     <main class="stage">
       <aside class="samples">
         <h2>SAMPLES <span id="sample-count"></span></h2>
@@ -98,6 +118,7 @@
       <span>FM KEYS audition</span>
       <span>LAYER adds an FM channel</span>
       <span>CH INST assigns FM to the selected drum channel</span>
+      <span>FX / PRM automates the channel strip</span>
       <span>SAVE / LOAD project</span>
     </footer>
   </div>
