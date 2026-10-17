@@ -859,6 +859,51 @@ import { resolveSound } from "./audio/layer.js";
     auditionLayer(ch, midiOf(noteCell?.note) ?? 60, 0.8, 0.7);
   }
 
+  function saveProject() {
+    const song = structuredClone(state.song);
+    song.version = 1;
+    const blob = new Blob([JSON.stringify(song, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    const name = String(song.title || "song").replace(/[^\w.-]+/g, "-").replace(/^-|-$/g, "") || "song";
+    link.href = URL.createObjectURL(blob);
+    link.download = `${name}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1500);
+  }
+
+  function loadProject(song) {
+    if (!song || typeof song !== "object" || !Array.isArray(song.patterns?.[0]?.data)) {
+      throw new Error("not a tracker project");
+    }
+    const data = song.patterns[0].data;
+    if (data.length < 8) throw new Error("pattern is missing drum channels");
+    song.instruments ||= [];
+    song.layers ||= [];
+    song.channelFx ||= {};
+    song.rows = song.patterns[0].rows || data[0]?.length || 16;
+    song.channels = data.length;
+    while (song.layers.length < data.length - 8) {
+      const index = song.layers.length;
+      let inst = song.instruments[index];
+      if (!inst) {
+        inst = { id: `fm-lead-${index + 1}`, type: "fm", name: "Lead", preset: "lead", patch: {} };
+        song.instruments.push(inst);
+      }
+      song.layers.push({
+        id: inst.id,
+        name: inst.name || "Lead",
+        instrumentId: inst.id,
+        mute: false,
+      });
+    }
+    if (state.playing) stop();
+    applySong(song);
+    ensureLayerVoices().catch((err) => {
+      $("status").textContent = String(err.message || err);
+      $("status").className = "status err";
+    });
+  }
+
   async function composeLayer() {
     const prompt = $("layer-prompt").value.trim();
     if (!prompt) {
@@ -909,6 +954,21 @@ import { resolveSound } from "./audio/layer.js";
     $("btn-compose").addEventListener("click", () => compose(false));
     $("btn-preset").addEventListener("click", () => compose(true));
     $("btn-layer").addEventListener("click", () => composeLayer());
+    $("btn-save").addEventListener("click", saveProject);
+    $("btn-load").addEventListener("click", () => $("project-file").click());
+    $("project-file").addEventListener("change", () => {
+      const file = $("project-file").files?.[0];
+      $("project-file").value = "";
+      if (!file) return;
+      file.text().then((text) => {
+        loadProject(JSON.parse(text));
+        $("status").textContent = `loaded ${state.song.title || "project"}`;
+        $("status").className = "status ok";
+      }).catch((err) => {
+        $("status").textContent = String(err.message || err);
+        $("status").className = "status err";
+      });
+    });
     $("master").addEventListener("input", () => {
       if (!state.master || !state.ctx) return;
       // Exponential approach from the value already playing. Time constant

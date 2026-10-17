@@ -68,6 +68,11 @@
       <section class="tracker">
         <div class="song-meta">
           <span id="song-title">Untitled</span>
+          <span class="song-file">
+            <button type="button" id="btn-save">SAVE</button>
+            <button type="button" id="btn-load">LOAD</button>
+            <input id="project-file" type="file" accept="application/json,.json" hidden />
+          </span>
           <span id="llm-meta"></span>
         </div>
         <div class="grid-wrap" id="grid-wrap">
@@ -87,6 +92,7 @@
       <span>click sample to audition</span>
       <span>FM KEYS audition</span>
       <span>LAYER adds an FM channel</span>
+      <span>SAVE / LOAD project</span>
     </footer>
   </div>
   <script type="module" src="/app.js"></script>

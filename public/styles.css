@@ -157,6 +157,13 @@ select, .compose button {
 }
 #song-title { color: var(--inst); }
 #llm-meta { color: var(--dim); font-size: 11px; }
+.song-file { display: flex; gap: 6px; }
+.song-file button {
+  background: #1c2433; color: var(--text); border: 1px solid var(--line);
+  font: inherit; font-size: 11px; letter-spacing: 0.06em;
+  padding: 2px 8px; cursor: pointer;
+}
+.song-file button:hover { border-color: var(--accent); color: var(--accent); }
 .channels {
   display: grid;
   grid-template-columns: 40px repeat(8, 1fr);
