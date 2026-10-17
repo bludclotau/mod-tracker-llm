@@ -17,31 +17,192 @@
         </div>
       </div>
       <div class="transport">
-        <button id="btn-play" class="big">PLAY</button>
-        <button id="btn-stop" class="big">STOP</button>
-        <label>BPM <input id="bpm" type="number" min="60" max="200" value="90" /></label>
-        <label>PAT <input id="pat" type="text" value="00" readonly /></label>
-        <label>ROW <span id="row-ind">00</span></label>
-        <label class="vol">VOL <input id="master" type="range" min="0" max="100" value="80" /></label>
+        <button id="btn-play" class="big" type="button">PLAY</button>
+        <button id="btn-stop" class="big" type="button">STOP</button>
+        <label for="bpm">BPM <input id="bpm" type="number" min="60" max="200" value="90" /></label>
+        <label for="pat">PAT <input id="pat" type="text" value="00" readonly /></label>
+        <span>ROW <span id="row-ind">00</span></span>
+        <label class="vol" for="master">VOL <input id="master" type="range" min="0" max="100" value="80" /></label>
       </div>
-      <div id="status" class="status">loading samples…</div>
+      <div id="status" class="status" role="status" aria-live="polite">loading samples…</div>
     </header>
 
     <section class="compose">
       <label class="prompt-label" for="prompt">LLM COMPOSE</label>
       <input id="prompt" type="text" maxlength="240"
         placeholder="boom bap hip hop at 90bpm, dusty kicks, snappy snare…" />
+      <label for="node">MODEL</label>
       <select id="node">
         <option value="dolphin" selected>dolphin :8082</option>
         <option value="qwen">qwen :8081</option>
       </select>
-      <button id="btn-compose">COMPOSE</button>
-      <button id="btn-preset" title="Use a local template from the prompt">PRESET</button>
+      <button id="btn-compose" type="button">COMPOSE</button>
+      <button id="btn-preset" type="button" title="Use a local template from the prompt">PRESET</button>
     </section>
+
+    <details class="sound-rack" id="sound-rack">
+      <summary>FM SYNTH &amp; EFFECTS</summary>
+      <div class="rack-panels">
+        <section class="rack-panel fm-panel" aria-labelledby="fm-heading" aria-describedby="fm-help">
+          <h2 id="fm-heading">FM SYNTH</h2>
+          <p id="fm-help">
+            Select an FM instrument in the instrument list to insert synth notes with the existing
+            Z–M / Q–U note keyboard. Patch edits affect subsequent notes. Gate determines note
+            duration because tracker note-off events are not implemented.
+          </p>
+
+          <div class="rack-control">
+            <label for="fm-patch">Patch</label>
+            <select id="fm-patch">
+              <option value="bass" selected>Bass</option>
+              <option value="bell">Bell</option>
+              <option value="keys">Keys</option>
+            </select>
+          </div>
+          <div class="rack-control">
+            <label for="fm-waveform">Carrier waveform</label>
+            <select id="fm-waveform">
+              <option value="sine" selected>Sine</option>
+              <option value="triangle">Triangle</option>
+              <option value="sawtooth">Sawtooth</option>
+              <option value="square">Square</option>
+            </select>
+          </div>
+          <div class="rack-control">
+            <label for="fm-ratio">Modulator / carrier ratio</label>
+            <input id="fm-ratio" type="range" min="0.25" max="12" step="0.25" value="1" />
+            <output id="fm-ratio-value" for="fm-ratio">1:1</output>
+          </div>
+          <div class="rack-control">
+            <label for="fm-index">Modulation index</label>
+            <input id="fm-index" type="range" min="0" max="20" step="0.1" value="2" />
+            <output id="fm-index-value" for="fm-index">2</output>
+          </div>
+          <div class="rack-control">
+            <label for="fm-mod-decay">Modulation decay (seconds)</label>
+            <input id="fm-mod-decay" type="range" min="0.01" max="4" step="0.01" value="0.2" />
+            <output id="fm-mod-decay-value" for="fm-mod-decay">0.20 s</output>
+          </div>
+          <div class="rack-control">
+            <label for="fm-attack">Amplitude attack (seconds)</label>
+            <input id="fm-attack" type="range" min="0.005" max="2" step="0.005" value="0.01" />
+            <output id="fm-attack-value" for="fm-attack">0.010 s</output>
+          </div>
+          <div class="rack-control">
+            <label for="fm-decay">Amplitude decay (seconds)</label>
+            <input id="fm-decay" type="range" min="0.01" max="3" step="0.01" value="0.3" />
+            <output id="fm-decay-value" for="fm-decay">0.30 s</output>
+          </div>
+          <div class="rack-control">
+            <label for="fm-sustain">Amplitude sustain (0–1)</label>
+            <input id="fm-sustain" type="range" min="0" max="1" step="0.01" value="0.5" />
+            <output id="fm-sustain-value" for="fm-sustain">0.50</output>
+          </div>
+          <div class="rack-control">
+            <label for="fm-release">Amplitude release (seconds)</label>
+            <input id="fm-release" type="range" min="0.01" max="4" step="0.01" value="0.2" />
+            <output id="fm-release-value" for="fm-release">0.20 s</output>
+          </div>
+          <div class="rack-control">
+            <label for="fm-gate">Gate duration (seconds)</label>
+            <input id="fm-gate" type="range" min="0.03" max="4" step="0.01" value="0.25" />
+            <output id="fm-gate-value" for="fm-gate">0.25 s</output>
+          </div>
+          <div class="rack-actions">
+            <button id="btn-fm-audition" type="button">AUDITION FM</button>
+            <button id="btn-fm-reset" type="button">RESET FM PATCH</button>
+          </div>
+        </section>
+
+        <section class="rack-panel effects-panel" aria-labelledby="fx-heading" aria-describedby="fx-help">
+          <h2 id="fx-heading">GLOBAL EFFECTS</h2>
+          <p id="fx-help">Effects apply globally to samples and synths, including auditions.</p>
+
+          <fieldset>
+            <legend>Filter</legend>
+            <div class="rack-control">
+              <label for="fx-filter-cutoff">Low-pass cutoff (Hz)</label>
+              <input id="fx-filter-cutoff" type="range" min="40" max="20000" step="1" value="20000" />
+              <output id="fx-filter-cutoff-value" for="fx-filter-cutoff">20000 Hz</output>
+            </div>
+            <div class="rack-control">
+              <label for="fx-filter-q">Resonance (Q)</label>
+              <input id="fx-filter-q" type="range" min="0.1" max="12" step="0.001" value="0.707" />
+              <output id="fx-filter-q-value" for="fx-filter-q">0.707 Q</output>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Drive</legend>
+            <div class="rack-control">
+              <label for="fx-drive">Drive amount (0–100)</label>
+              <input id="fx-drive" type="range" min="0" max="100" step="1" value="0" />
+              <output id="fx-drive-value" for="fx-drive">0</output>
+            </div>
+            <div class="rack-control">
+              <label for="fx-drive-mix">Drive wet mix (%)</label>
+              <input id="fx-drive-mix" type="range" min="0" max="100" step="1" value="0" />
+              <output id="fx-drive-mix-value" for="fx-drive-mix">0%</output>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Delay</legend>
+            <div class="rack-control">
+              <label for="fx-delay-time">Delay time (ms)</label>
+              <input id="fx-delay-time" type="range" min="10" max="1000" step="1" value="250" />
+              <output id="fx-delay-time-value" for="fx-delay-time">250 ms</output>
+            </div>
+            <div class="rack-control">
+              <label for="fx-delay-feedback">Delay feedback (%)</label>
+              <input id="fx-delay-feedback" type="range" min="0" max="85" step="1" value="0" />
+              <output id="fx-delay-feedback-value" for="fx-delay-feedback">0%</output>
+            </div>
+            <div class="rack-control">
+              <label for="fx-delay-mix">Delay wet mix (%)</label>
+              <input id="fx-delay-mix" type="range" min="0" max="100" step="1" value="0" />
+              <output id="fx-delay-mix-value" for="fx-delay-mix">0%</output>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Reverb</legend>
+            <div class="rack-control">
+              <label for="fx-reverb-mix">Reverb wet mix (%)</label>
+              <input id="fx-reverb-mix" type="range" min="0" max="100" step="1" value="0" />
+              <output id="fx-reverb-mix-value" for="fx-reverb-mix">0%</output>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Compressor</legend>
+            <div class="rack-control">
+              <label for="fx-compressor-enabled">Enable compressor</label>
+              <input id="fx-compressor-enabled" type="checkbox" />
+              <output id="fx-compressor-enabled-value" for="fx-compressor-enabled">Off</output>
+            </div>
+            <div class="rack-control">
+              <label for="fx-compressor-threshold">Compressor threshold (dB)</label>
+              <input id="fx-compressor-threshold" type="range" min="-60" max="0" step="1" value="-24" />
+              <output id="fx-compressor-threshold-value" for="fx-compressor-threshold">-24 dB</output>
+            </div>
+            <div class="rack-control">
+              <label for="fx-compressor-ratio">Compression ratio</label>
+              <input id="fx-compressor-ratio" type="range" min="1" max="20" step="0.1" value="4" />
+              <output id="fx-compressor-ratio-value" for="fx-compressor-ratio">4:1</output>
+            </div>
+          </fieldset>
+
+          <div class="rack-actions">
+            <button id="btn-fx-reset" type="button">RESET EFFECTS</button>
+          </div>
+        </section>
+      </div>
+    </details>
 
     <main class="stage">
       <aside class="samples">
-        <h2>SAMPLES <span id="sample-count"></span></h2>
+        <h2>INSTRUMENTS · WAV <span id="sample-count">0</span> · SYNTH <span id="synth-count">0</span></h2>
         <div id="sample-list"></div>
       </aside>
 
@@ -64,8 +225,10 @@
       <span>DEL clear</span>
       <span>1–8 pick sample under cursor</span>
       <span>click sample to audition</span>
+      <span>choose an FM instrument in the list to enter synth notes</span>
     </footer>
   </div>
+  <script src="/audio-engine.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
