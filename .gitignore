@@ -3,3 +3,9 @@ node_modules/
 *.log
 tracker.txt
 .DS_Store
+/.vs
+/file_changes.json
+/file_index.json
+/file_new_log.txt
+/file_paths.json
+/file_update_log.txt

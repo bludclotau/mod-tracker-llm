@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Mod Tracker LLM — Quick Start</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #10151f;
+      --panel: #192231;
+      --text: #edf2fa;
+      --muted: #b9c6d8;
+      --accent: #91d7ff;
+      --border: #3c4c63;
+      --warning: #ffdc91;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+    }
+
+    .page {
+      width: min(100% - 2rem, 900px);
+      margin: 0 auto;
+    }
+
+    header { padding: 3rem 0 1.5rem; }
+
+    h1, h2, h3 {
+      line-height: 1.25;
+      text-wrap: balance;
+    }
+
+    h1 {
+      margin: 0.4rem 0 1rem;
+      font-size: clamp(2rem, 6vw, 3rem);
+    }
+
+    h2 {
+      margin: 0 0 1rem;
+      font-size: 1.5rem;
+    }
+
+    h3 { margin: 0 0 0.75rem; font-size: 1.15rem; }
+    p { margin: 0 0 1rem; }
+    li + li { margin-top: 0.5rem; }
+    ul, ol { padding-left: 1.5rem; }
+
+    a { color: var(--accent); text-underline-offset: 0.2em; }
+
+    a:focus-visible {
+      outline: 3px solid var(--warning);
+      outline-offset: 5px;
+    }
+
+    .eyebrow {
+      margin: 0;
+      color: var(--accent);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .muted, footer { color: var(--muted); }
+
+    .button {
+      display: inline-block;
+      margin: 0.25rem 0 1rem;
+      padding: 0.7rem 1.15rem;
+      border-radius: 0.5rem;
+      background: var(--accent);
+      color: #101b2a;
+      font-weight: 750;
+      text-decoration: none;
+    }
+
+    .button:hover { background: #c1e9ff; }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1.25rem;
+      margin-top: 1rem;
+    }
+
+    section {
+      margin: 1.25rem 0;
+      padding: clamp(1rem, 3vw, 1.75rem);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      background: var(--panel);
+      scroll-margin-top: 1rem;
+    }
+
+    section > :last-child, aside > :last-child { margin-bottom: 0; }
+
+    code, kbd {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.9em;
+      background: #101925;
+      border-radius: 0.25rem;
+      padding: 0.1rem 0.3rem;
+      overflow-wrap: anywhere;
+    }
+
+    kbd { border: 1px solid var(--border); }
+
+    .note {
+      padding-left: 1rem;
+      border-left: 3px solid var(--accent);
+    }
+
+    .limitations {
+      margin-top: 1.25rem;
+      padding: 1rem;
+      border: 1px solid #8a7346;
+      border-left: 4px solid var(--warning);
+      border-radius: 0.35rem;
+      background: #26251f;
+    }
+
+    .limitations h3 { color: var(--warning); }
+
+    table {
+      width: 100%;
+      margin: 1.25rem 0;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+
+    caption {
+      text-align: left;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    th, td {
+      padding: 0.65rem 0.5rem;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--border);
+      overflow-wrap: anywhere;
+    }
+
+    thead th { color: var(--accent); }
+    tbody th { width: 35%; font-weight: 600; }
+
+    footer {
+      padding: 1rem 0 2.5rem;
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 480px) {
+      header { padding-top: 2rem; }
+      th, td { padding: 0.6rem 0.3rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <p class="note">This page describes the oscillator sound rack that landed on main. The running tracker uses the AudioWorklet voices in <code>public/audio/</code>.</p>
+      <p class="eyebrow">Mod Tracker LLM</p>
+      <h1>Quick Start</h1>
+      <p class="muted">Browse samples, describe a beat, and edit its notes in a tracker grid.</p>
+      <a class="button" href="/">Open Mod Tracker</a>
+      <p class="note muted">
+        This guide and evaluation are based on the provided frontend source only.
+        The application and backend have not been runtime-tested for this guide.
+      </p>
+      <nav aria-label="Guide sections">
+        <a href="#overview">Overview</a>
+        <a href="#quick-start">Quick start</a>
+        <a href="#controls">Editing &amp; controls</a>
+        <a href="#evaluation">Frontend evaluation</a>
+        <a href="#troubleshooting">Troubleshooting</a>
+      </nav>
+    </header>
+
+    <main>
+      <section id="overview" aria-labelledby="overview-heading">
+        <h2 id="overview-heading">1. Overview</h2>
+        <p>
+          Mod Tracker LLM is a browser-based, eight-channel sample tracker with
+          Web Audio playback, keyboard pattern editing, and prompt-driven composition.
+          Its channels are <strong>kick, snare, hat, openhat, clap, percussion, crash,
+          and bass</strong>.
+        </p>
+        <p>
+          The frontend needs a running application backend that provides
+          <code>/api/samples</code>, <code>/api/health</code>, and
+          <code>/api/compose</code>, plus reachable sample audio URLs.
+          Open the tracker through its running web server—not by opening
+          <code>index.html</code> directly.
+        </p>
+      </section>
+
+      <section id="quick-start" aria-labelledby="quick-start-heading">
+        <h2 id="quick-start-heading">2. Quick start</h2>
+        <ol>
+          <li>Wait for the sample list and initial preset to load.</li>
+          <li>
+            Enter a description, such as
+            <q>dusty boom bap hip hop at 90bpm, punchy kick, snappy snare</q>.
+          </li>
+          <li>
+            Select <strong>dolphin</strong> or <strong>qwen</strong> and click
+            <strong>COMPOSE</strong>, or click <strong>PRESET</strong> to request
+            the backend’s local template.
+          </li>
+          <li>
+            Inspect the status and provider/fallback information to see which
+            provider or template supplied the result.
+          </li>
+          <li>
+            Click <strong>PLAY</strong>, adjust <strong>BPM</strong> (tempo) and
+            <strong>VOL</strong> (master volume), and click <strong>STOP</strong>
+            when finished.
+          </li>
+        </ol>
+        <p class="note">
+          <strong>PRESET skips model generation, not the backend.</strong>
+          It still requires the application backend. Your browser may also require
+          a click or keypress before it permits audio playback.
+        </p>
+      </section>
+
+      <section id="controls" aria-labelledby="controls-heading">
+        <h2 id="controls-heading">3. Editing and controls</h2>
+        <p>
+          Click a sample to select and audition it, then click a grid cell to position
+          the editing cursor. <strong>After typing a prompt, click the grid</strong>
+          before using editing shortcuts.
+        </p>
+
+        <table>
+          <caption>Control reference</caption>
+          <thead>
+            <tr>
+              <th scope="col">Control</th>
+              <th scope="col">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Sample click</th>
+              <td>Select and audition a sample.</td>
+            </tr>
+            <tr>
+              <th scope="row">Grid cell click</th>
+              <td>Place the editing cursor.</td>
+            </tr>
+            <tr>
+              <th scope="row">Arrow keys</th>
+              <td>Move between rows and channels.</td>
+            </tr>
+            <tr>
+              <th scope="row"><kbd>Z</kbd>–<kbd>M</kbd>, <kbd>Q</kbd>–<kbd>U</kbd></th>
+              <td>Enter notes with tracker-style keyboard mappings; each note advances one row.</td>
+            </tr>
+            <tr>
+              <th scope="row"><kbd>Delete</kbd> / <kbd>Backspace</kbd></th>
+              <td>Clear the selected cell.</td>
+            </tr>
+            <tr>
+              <th scope="row"><kbd>Space</kbd></th>
+              <td>Toggle playback when focus is outside text inputs and selectors.</td>
+            </tr>
+            <tr>
+              <th scope="row">PLAY / STOP; BPM / VOL</th>
+              <td>Start or stop playback; adjust tempo and master volume.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>
+          Like a piano layout, mapped black-key notes use intervening keys,
+          including <kbd>S</kbd>, <kbd>D</kbd>, <kbd>G</kbd>, <kbd>H</kbd>,
+          <kbd>J</kbd>, and some number keys.
+        </p>
+        <p>
+          Each cell shows a <strong>note, sample ID, and volume</strong>.
+          Sample IDs, volumes, and row numbers are displayed in hexadecimal
+          (base 16): volume <code>40</code> means decimal <strong>64</strong>.
+          Playback starts from row zero and loops the first pattern.
+        </p>
+      </section>
+
+      <section id="evaluation" aria-labelledby="evaluation-heading">
+        <h2 id="evaluation-heading">4. Frontend evaluation</h2>
+        <p>
+          <strong>Strengths:</strong> The UI clearly separates sample browsing,
+          composition, and editing. Color-coded cell information and sample auditioning
+          help users inspect a beat, while model-provider selection and template fallback
+          reporting make composition choices and outcomes more visible.
+        </p>
+
+        <aside class="limitations" aria-labelledby="limitations-heading">
+          <h3 id="limitations-heading">Known limitations</h3>
+          <ul>
+            <li>Only the first pattern is edited and played, despite the song order and pattern fields.</li>
+            <li>The channel count is fixed at eight.</li>
+            <li>No save/export or undo controls are present in the supplied UI.</li>
+            <li><strong>PRESET is not a fully offline mode;</strong> it needs the application backend.</li>
+            <li>
+              <strong>Shortcut conflict:</strong> Number keys <kbd>1</kbd>–<kbd>8</kbd>
+              attempt to select kit samples, but <kbd>2</kbd>, <kbd>3</kbd>,
+              <kbd>5</kbd>, <kbd>6</kbd>, and <kbd>7</kbd> also enter notes.
+              Clicking the sample list is safer.
+            </li>
+            <li>
+              The header and some status messages are dolphin-specific even when
+              qwen is selected.
+            </li>
+          </ul>
+        </aside>
+      </section>
+
+      <section id="troubleshooting" aria-labelledby="troubleshooting-heading">
+        <h2 id="troubleshooting-heading">5. Troubleshooting</h2>
+        <ul>
+          <li>
+            <strong>No sound?</strong> Click PLAY or a sample to unlock browser audio.
+            Check the tracker’s master volume and your system volume, then check for
+            sample-loading errors.
+          </li>
+          <li>
+            <strong>Model failure?</strong> Check that the selected dolphin or qwen
+            service is available. Try PRESET if the application backend remains
+            available. Composition can return a template fallback, so read the status
+            and provider/fallback information.
+          </li>
+          <li>
+            <strong>Unexpected keyboard behavior?</strong> Click a grid cell to return
+            to editing and avoid the conflicting numeric sample shortcuts; select
+            samples by clicking instead.
+          </li>
+          <li>
+            <strong>Replacing the song?</strong> Stop playback before clicking
+            COMPOSE or PRESET.
+          </li>
+        </ul>
+      </section>
+    </main>
+
+    <footer>
+      Standalone documentation only; no changes to <code>index.html</code>,
+      <code>app.js</code>, or <code>styles.css</code> are required.
+    </footer>
+  </div>
+</body>
+</html>
