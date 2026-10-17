@@ -49,6 +49,28 @@ export const FM_PRESETS = [
       { ratio: 1, detune: 0, attack: 0.003, decay: 0.16, sustain: 0, release: 0.06, level: 0.85 },
     ],
   },
+  {
+    id: "lead",
+    name: "Lead",
+    depth: 2.4,
+    feedback: 0.5,
+    velocity: 0.6,
+    ops: [
+      { ratio: 2, detune: 4, attack: 0.02, decay: 0.36, sustain: 0.45, release: 0.2, level: 0.8 },
+      { ratio: 1, detune: 0, attack: 0.02, decay: 0.55, sustain: 0.7, release: 0.2, level: 0.9 },
+    ],
+  },
+  {
+    id: "pad",
+    name: "Pad",
+    depth: 0.8,
+    feedback: 0.15,
+    velocity: 0.3,
+    ops: [
+      { ratio: 1, detune: 7, attack: 0.55, decay: 0.8, sustain: 0.8, release: 0.9, level: 0.5 },
+      { ratio: 1, detune: -6, attack: 0.55, decay: 1.2, sustain: 0.9, release: 0.9, level: 0.8 },
+    ],
+  },
 ];
 
 export function clonePreset(preset) {

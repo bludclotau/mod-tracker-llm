@@ -6,6 +6,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { LAYER_GRAMMAR, LAYER_MAX_TOKENS, expandLayer, layerMessages } from "./public/audio/layer.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, "public");
@@ -401,7 +402,7 @@ async function chatComplete(base, body) {
   return JSON.parse(text);
 }
 
-async function composeWithLlama(nodeUrl, prompt) {
+async function composeWithLlama(nodeUrl, prompt, spec = null) {
   let model = "dolphin";
   try {
     const models = await llamaModels(nodeUrl);
@@ -412,16 +413,16 @@ async function composeWithLlama(nodeUrl, prompt) {
   const completion = await chatComplete(nodeUrl, {
     model,
     temperature: 0.7,
-    max_tokens: 400,
+    max_tokens: spec?.maxTokens ?? 400,
     cache_prompt: true,
-    grammar: GRAMMAR.trim(),
-    messages: composeMessages(prompt),
+    grammar: (spec?.grammar || GRAMMAR).trim(),
+    messages: spec?.messages || composeMessages(prompt),
   });
   const content = completion?.choices?.[0]?.message?.content || "";
   return { content, model, provider: "llama.cpp", node: nodeUrl };
 }
 
-async function composeWithXai(prompt) {
+async function composeWithXai(prompt, spec = null) {
   if (!XAI_API_KEY) throw new Error("no XAI_API_KEY");
   const r = await fetch(`${XAI_BASE_URL}/chat/completions`, {
     method: "POST",
@@ -432,8 +433,8 @@ async function composeWithXai(prompt) {
     body: JSON.stringify({
       model: XAI_MODEL,
       temperature: 0.7,
-      max_tokens: 400,
-      messages: composeMessages(prompt),
+      max_tokens: spec?.maxTokens ?? 400,
+      messages: spec?.messages || composeMessages(prompt),
     }),
     signal: AbortSignal.timeout(120000),
   });
@@ -448,7 +449,78 @@ async function composeWithXai(prompt) {
   };
 }
 
-async function handleCompose(req, res, url) {
+function layerPayload(layer, llm) {
+  return {
+    instrument: layer.instrument,
+    channelFx: layer.channelFx,
+    cells: layer.cells,
+    llm,
+  };
+}
+
+async function handleLayer(res, parsedBody) {
+  const prompt = String(parsedBody.prompt || "").trim();
+  if (!prompt) return json(res, 400, { error: "prompt required" });
+  const song = parsedBody.song && typeof parsedBody.song === "object" ? parsedBody.song : {};
+  const ctx = {
+    bpm: song.bpm ?? parsedBody.bpm,
+    kick: song.kick ?? parsedBody.kick,
+    bass: song.bass ?? parsedBody.bass,
+  };
+  const offline = Boolean(parsedBody.local || parsedBody.offline || parsedBody.node === "offline");
+  if (offline) {
+    const layer = expandLayer(null, prompt, ctx);
+    return json(res, 200, layerPayload(layer, {
+      ok: false,
+      provider: "template",
+      model: "local-template",
+      node: null,
+      raw: "",
+      errors: [],
+    }));
+  }
+
+  const spec = {
+    grammar: LAYER_GRAMMAR,
+    messages: layerMessages(prompt, ctx),
+    maxTokens: LAYER_MAX_TOKENS,
+  };
+  const node = String(parsedBody.node || "dolphin");
+  const nodeUrl = node === "qwen" ? LLAMA_URL_2 : LLAMA_URL;
+  const errors = [];
+  let llm = null;
+  try {
+    llm = await composeWithLlama(nodeUrl, prompt, spec);
+  } catch (err) {
+    errors.push(String(err.message || err));
+    const fallbackUrl = nodeUrl === LLAMA_URL ? LLAMA_URL_2 : LLAMA_URL;
+    try {
+      llm = await composeWithLlama(fallbackUrl, prompt, spec);
+    } catch (err2) {
+      errors.push(String(err2.message || err2));
+    }
+  }
+  if (!llm) {
+    try {
+      llm = await composeWithXai(prompt, spec);
+    } catch (err) {
+      errors.push(String(err.message || err));
+    }
+  }
+  const raw = llm?.content || "";
+  const parsed = extractJson(raw);
+  const layer = expandLayer(parsed, prompt, ctx);
+  return json(res, 200, layerPayload(layer, {
+    ok: Boolean(parsed) && !layer.fallback,
+    provider: llm?.provider || "template",
+    model: llm?.model || "local-template",
+    node: llm?.node || null,
+    raw: raw.slice(0, 4000),
+    errors,
+  }));
+}
+
+async function handleCompose(req, res, url, forceLayer = false) {
   const body = await readBody(req);
   let parsedBody = {};
   try {
@@ -456,6 +528,8 @@ async function handleCompose(req, res, url) {
   } catch {
     return json(res, 400, { error: "invalid json" });
   }
+  if (forceLayer) parsedBody.mode = "layer";
+  if (parsedBody.mode === "layer") return handleLayer(res, parsedBody);
   const prompt = String(parsedBody.prompt || "").trim();
   if (!prompt) return json(res, 400, { error: "prompt required" });
   if (parsedBody.local) {
@@ -558,6 +632,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { templates: Object.keys(TEMPLATES) });
     }
     if (req.method === "POST" && url.pathname === "/api/compose") return handleCompose(req, res, url);
+    if (req.method === "POST" && url.pathname === "/api/compose-layer") return handleCompose(req, res, url, true);
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       return sendFile(res, path.join(PUBLIC, "index.html"));
     }
