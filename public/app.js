@@ -1,3 +1,5 @@
+import { NOTE_OFF, SampleVoice, isNoteOff } from "./audio/voice.js";
+
 /* MOD Tracker LLM — pattern editor + Web Audio player + Dolphin compose. */
 (() => {
   const NOTES = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
@@ -35,7 +37,7 @@
     playing: false,
     ctx: null,
     master: null,
-    hatGain: null,
+    voices: null,
     nextTime: 0,
     playRow: 0,
     timer: 0,
@@ -82,6 +84,7 @@
     master.connect(ctx.destination);
     state.ctx = ctx;
     state.master = master;
+    state.voices = Array.from({ length: 8 }, () => new SampleVoice(ctx, master));
     return ctx;
   }
 
@@ -94,46 +97,35 @@
     return buf;
   }
 
-  function stopVoice(ch) {
-    const v = state.voices?.[ch];
-    if (!v) return;
-    try {
-      v.gain.gain.cancelScheduledValues(state.ctx.currentTime);
-      v.gain.gain.setTargetAtTime(0, state.ctx.currentTime, 0.01);
-      v.src.stop(state.ctx.currentTime + 0.05);
-    } catch { /* already stopped */ }
-    state.voices[ch] = null;
+  function cutVoice(ch, time) {
+    state.voices?.[ch]?.cut(time);
   }
 
-  async function trigger(cell, when, ch, role) {
+  // Retrigger policy lives in audio/voice.js. This function only decides
+  // note-off vs note-on, and which slots a hat sample steals.
+  function playCell(cell, when, ch, role) {
+    const voice = state.voices?.[ch];
+    if (!voice) return;
+    if (isNoteOff(cell)) {
+      voice.noteOff(when);
+      return;
+    }
     if (!cell?.sample || !cell.note) return;
     const sample = state.byId.get(cell.sample);
     if (!sample) return;
     const buf = state.buffers.get(sample.id);
     if (!buf) return;
-    const ctx = state.ctx;
+    const now = state.ctx.currentTime;
     if (sample.muteGroup === "hats") {
-      stopVoice(ROLES.indexOf("hat"));
-      stopVoice(ROLES.indexOf("openhat"));
+      cutVoice(ROLES.indexOf("hat"), now);
+      cutVoice(ROLES.indexOf("openhat"), now);
     } else {
-      stopVoice(ch);
+      cutVoice(ch, now);
     }
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
     const midi = midiOf(cell.note) ?? (role === "bass" ? 24 : 60);
-    src.playbackRate.value = 2 ** ((midi - 60) / 12);
-    const gain = ctx.createGain();
-    const vol = (cell.volume || 64) / 64;
-    gain.gain.setValueAtTime(vol, when);
-    const pan = ctx.createStereoPanner();
-    pan.pan.value = (ch - 3.5) / 8;
-    src.connect(gain).connect(pan).connect(state.master);
-    src.start(when);
-    state.voices = state.voices || Array(8).fill(null);
-    state.voices[ch] = { src, gain };
-    src.onended = () => {
-      if (state.voices?.[ch]?.src === src) state.voices[ch] = null;
-    };
+    voice.buffer = buf;
+    voice.pan = (ch - 3.5) / 8;
+    voice.noteOn(when, midi, (cell.volume || 64) / 64);
   }
 
   function schedule() {
@@ -143,7 +135,7 @@
     while (state.nextTime < state.ctx.currentTime + ahead) {
       const row = state.playRow;
       for (let ch = 0; ch < 8; ch++) {
-        trigger(pat.data[ch][row], state.nextTime, ch, ROLES[ch]);
+        playCell(pat.data[ch][row], state.nextTime, ch, ROLES[ch]);
       }
       paintPlayhead(row);
       $("row-ind").textContent = hex2(row);
@@ -177,7 +169,10 @@
   function stop() {
     state.playing = false;
     cancelAnimationFrame(state.timer);
-    if (state.voices) state.voices.forEach((_, i) => stopVoice(i));
+    if (state.ctx && state.voices) {
+      const t = state.ctx.currentTime;
+      for (const voice of state.voices) voice.cut(t);
+    }
     $("status").textContent = "stopped";
     $("status").className = "status";
   }
@@ -195,15 +190,11 @@
   async function preview(sample) {
     await ensureAudio();
     const buf = await decodeSample(sample);
-    stopVoice(7);
-    const src = state.ctx.createBufferSource();
-    src.buffer = buf;
-    const gain = state.ctx.createGain();
-    gain.gain.value = 0.9;
-    src.connect(gain).connect(state.master);
-    src.start();
-    state.voices = state.voices || Array(8).fill(null);
-    state.voices[7] = { src, gain };
+    const voice = state.voices[7];
+    voice.cut(state.ctx.currentTime);
+    voice.buffer = buf;
+    voice.pan = null;
+    voice.noteOn(state.ctx.currentTime, 60, 0.9);
   }
 
   function applySong(song) {
@@ -284,6 +275,9 @@
   }
 
   function renderCell(cell) {
+    if (isNoteOff(cell)) {
+      return `<span class="n off">===</span> <span class="s">--</span> <span class="v">--</span>`;
+    }
     if (!cell?.note && !cell?.sample) return "--- -- --";
     const n = cell.note || "---";
     const s = cell.sample ? hex2(cell.sample) : "--";
@@ -309,8 +303,25 @@
     const sample = state.byId.get(cell.sample);
     if (sample) {
       ensureAudio().then(() => decodeSample(sample)).then(() => {
-        trigger(cell, state.ctx.currentTime, state.ch, ROLES[state.ch]);
+        playCell(cell, state.ctx.currentTime, state.ch, ROLES[state.ch]);
       });
+    }
+    state.row = (state.row + 1) % pat.rows;
+    selectCell();
+  }
+
+  function putNoteOff() {
+    const pat = state.song.patterns[0];
+    const cell = pat.data[state.ch][state.row];
+    cell.note = NOTE_OFF;
+    cell.sample = 0;
+    cell.volume = 0;
+    cell.effect = 0;
+    cell.param = 0;
+    const el = document.querySelector(`.cell[data-r="${state.row}"][data-c="${state.ch}"]`);
+    if (el) el.innerHTML = renderCell(cell);
+    if (state.ctx && state.voices?.[state.ch]) {
+      state.voices[state.ch].noteOff(state.ctx.currentTime);
     }
     state.row = (state.row + 1) % pat.rows;
     selectCell();
@@ -375,6 +386,7 @@
     if (ev.key === "ArrowRight") { state.ch = (state.ch + 1) % 8; selectCell(); ev.preventDefault(); }
     if (ev.key === "ArrowLeft") { state.ch = (state.ch + 7) % 8; selectCell(); ev.preventDefault(); }
     if (ev.key === "Delete" || ev.key === "Backspace") { clearCell(); ev.preventDefault(); }
+    if (ev.code === "Backquote") { putNoteOff(); ev.preventDefault(); return; }
     const k = ev.key.toLowerCase();
     if (k in LOWER) putNote(LOWER[k] + (state.octave + 1) * 12);
     if (k in UPPER) putNote(UPPER[k] + (state.octave + 1) * 12);
@@ -393,7 +405,10 @@
     $("btn-compose").addEventListener("click", () => compose(false));
     $("btn-preset").addEventListener("click", () => compose(true));
     $("master").addEventListener("input", () => {
-      if (state.master) state.master.gain.value = Number($("master").value) / 100;
+      if (!state.master || !state.ctx) return;
+      // Exponential approach from the value already playing. Time constant
+      // 5 ms, so a slider move settles inside the click-free window.
+      state.master.gain.setTargetAtTime(Number($("master").value) / 100, state.ctx.currentTime, 0.005);
     });
     $("bpm").addEventListener("change", () => {
       if (state.song) state.song.bpm = Number($("bpm").value) || 90;

@@ -35,9 +35,32 @@ keywords (boom-bap, trap, house, dnb, breakbeat, lofi, techno).
 
 ## Playback
 
-Web Audio plays the WAV samples with per-channel voice stealing. Closed and
-open hats share a mute group. Tracker keys: `Z–M` / `Q–U` for notes, arrows to
-move, `DEL` to clear, space to play/stop. Click a sample to audition it.
+Web Audio plays the WAV samples with one monophonic voice per channel. Closed
+and open hats share a mute group. Tracker keys: `Z–M` / `Q–U` for notes,
+`` ` `` for note-off, arrows to move, `DEL` to clear, space to play/stop.
+Click a sample to audition it. Audition uses the bass channel's voice.
+
+A row is a sixteenth note: `15 / bpm` seconds. `song.speed` is stored (classic
+ticks per row) and the scheduler does not read it. The scheduler looks ahead
+120 ms and stamps each row with an audio-clock time.
+
+## Voices
+
+`public/audio/voice.js` is the playback interface. Each channel holds one voice.
+
+| call | meaning |
+|------|---------|
+| `noteOn(time, note, velocity)` | start a note at an audio-clock time. `note` is MIDI. `velocity` 1 matches cell volume 64 |
+| `noteOff(time)` | envelope release. Cell token `===`. Drum one-shots ignore it |
+| `cut(time)` | silence with a 10 ms ramp, then stop the source 50 ms later |
+
+There is no legato. A new note cuts the previous note on that channel before
+`noteOn`. A hat sample cuts both hat channels. The cut is stamped with
+`currentTime` when the row is scheduled, so a stolen sample can start fading
+up to one lookahead early. `noteOn` and `noteOff` use the row time itself.
+`SampleVoice` is the drum implementation of this interface. Pattern commands
+do not change it. Existing songs have no `===` cells, so drum playback is
+unchanged.
 
 ## LLM nodes
 

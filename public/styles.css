@@ -143,6 +143,7 @@ select, .compose button {
   border-bottom: 1px solid #121722;
 }
 .cell .n { color: var(--note); }
+.cell .off { color: var(--warn); }
 .cell .s { color: var(--inst); }
 .cell .v { color: var(--vol); }
 .cell.sel { background: var(--sel); outline: 1px solid var(--accent); }
