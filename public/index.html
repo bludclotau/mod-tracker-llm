@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MOD TRACKER LLM</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="chrome">
+      <div class="brand">
+        <span class="logo">FT</span>
+        <div>
+          <h1>MOD TRACKER LLM</h1>
+          <p class="tag">dolphin @ 10.1.1.122:8082 · wavbvkery dreams kit</p>
+        </div>
+      </div>
+      <div class="transport">
+        <button id="btn-play" class="big">PLAY</button>
+        <button id="btn-stop" class="big">STOP</button>
+        <label>BPM <input id="bpm" type="number" min="60" max="200" value="90" /></label>
+        <label>PAT <input id="pat" type="text" value="00" readonly /></label>
+        <label>ROW <span id="row-ind">00</span></label>
+        <label class="vol">VOL <input id="master" type="range" min="0" max="100" value="80" /></label>
+      </div>
+      <div id="status" class="status">loading samples…</div>
+    </header>
+
+    <section class="compose">
+      <label class="prompt-label" for="prompt">LLM COMPOSE</label>
+      <input id="prompt" type="text" maxlength="240"
+        placeholder="boom bap hip hop at 90bpm, dusty kicks, snappy snare…" />
+      <select id="node">
+        <option value="dolphin" selected>dolphin :8082</option>
+        <option value="qwen">qwen :8081</option>
+      </select>
+      <button id="btn-compose">COMPOSE</button>
+      <button id="btn-preset" title="Use a local template from the prompt">PRESET</button>
+    </section>
+
+    <main class="stage">
+      <aside class="samples">
+        <h2>SAMPLES <span id="sample-count"></span></h2>
+        <div id="sample-list"></div>
+      </aside>
+
+      <section class="tracker">
+        <div class="song-meta">
+          <span id="song-title">Untitled</span>
+          <span id="llm-meta"></span>
+        </div>
+        <div class="channels" id="channel-heads"></div>
+        <div class="grid-wrap" id="grid-wrap">
+          <div id="grid"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="help">
+      <span>SPACE play/stop</span>
+      <span>ARROWS move</span>
+      <span>Z–M / Q–U notes</span>
+      <span>DEL clear</span>
+      <span>1–8 pick sample under cursor</span>
+      <span>click sample to audition</span>
+    </footer>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

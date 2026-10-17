@@ -1,0 +1,14 @@
+{
+  "name": "mod-tracker-llm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Classic web MOD tracker. llama.cpp composes patterns from the ESS drum kit.",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
