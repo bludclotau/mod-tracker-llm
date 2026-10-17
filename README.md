@@ -62,6 +62,43 @@ up to one lookahead early. `noteOn` and `noteOff` use the row time itself.
 do not change it. Existing songs have no `===` cells, so drum playback is
 unchanged.
 
+## FM voice
+
+`FMVoice` is a second implementation of the same three calls. It is a
+two-operator AudioWorklet (`public/audio/fm-worklet.js`), not an oscillator
+graph, because operator feedback is per sample. Operator 0 modulates operator 1:
+
+```
+modulator = sin(modPhase + feedback * prevMod) * modEnv * modLevel
+output    = sin(carPhase + depth * modulator) * carEnv * carLevel * velGain
+```
+
+`prevMod` is the previous modulator sample, including its envelope and level.
+`depth` and `feedback` are radians. `velGain = (1 - velSens) + velSens * velocity`.
+Each operator has a ratio (against the played note), fine detune in cents,
+ADSR, and an output level. Attack, decay, release, retrigger, and cut are
+ramped (3 ms minimum on the envelope stages, 5 ms on retrigger, cut, and
+preset moves).
+
+The worklet applies a note at the sample whose audio-clock time reaches the
+timestamp on the message. The pattern scheduler already looks ahead 120 ms
+and has those timestamps. It does not play FM yet. **PING** plays C-4 on the
+selected preset. **KEYS** sends the tracker keyboard (`Z–M` / `Q–U`, `` ` ``
+for note-off) to the FM voice instead of the sample audition. The key still
+writes the cell. Pattern playback stays on the drum kit either way. KEYS
+defaults off.
+
+Presets: E-Piano, Bell, FM Bass, Pluck. Edits last until you pick another
+preset. Stable control ids, for the later pattern commands:
+
+| id | meaning |
+|----|---------|
+| `fmDepth` | carrier modulation index, radians |
+| `feedback` | modulator feedback, radians |
+| `velSens` | how much velocity scales the output |
+| `opRatio`, `opDetune`, `opAttack`, `opDecay`, `opSustain`, `opRelease`, `opLevel` | modulator |
+| `carRatio`, `carDetune`, `carAttack`, `carDecay`, `carSustain`, `carRelease`, `carLevel` | carrier |
+
 ## LLM nodes
 
 | node | default |

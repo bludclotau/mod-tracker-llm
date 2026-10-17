@@ -27,6 +27,11 @@
  *   own audio-clock time. A stolen sample therefore starts fading when the
  *   scheduler sees the new hit, and the new sample starts on the row.
  *   That is the original player's behaviour, kept on purpose.
+ *
+ * FMVoice in fm-voice.js implements the same three calls for the audition
+ * synth. The pattern scheduler does not use it yet. Its noteOn retriggers
+ * internally with a 5 ms fade; a cut at the same timestamp would cancel the
+ * new note, so callers leave the fade to noteOn.
  */
 
 export const NOTE_OFF = "===";

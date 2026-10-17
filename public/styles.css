@@ -87,6 +87,42 @@ select, .compose button {
 }
 #btn-compose { color: var(--inst); }
 
+.fm-panel {
+  background: #0d1118;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 16px 10px;
+}
+.fm-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.fm-head select, .fm-head button {
+  background: #1c2433;
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.fm-head button:hover { border-color: var(--accent); color: var(--accent); }
+.fm-keys { color: var(--dim); display: flex; gap: 6px; align-items: center; }
+#fm-hint { color: var(--dim); font-size: 11px; }
+.fm-globals { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 6px; }
+.fm-grid {
+  display: grid;
+  grid-template-columns: 52px repeat(7, minmax(72px, 1fr));
+  gap: 4px 8px;
+  align-items: end;
+  overflow-x: auto;
+}
+.fm-op-name { color: var(--accent); font-size: 11px; letter-spacing: 0.08em; padding-bottom: 4px; }
+.fm-ctl { display: flex; flex-direction: column; gap: 2px; color: var(--dim); font-size: 10px; letter-spacing: 0.04em; }
+.fm-ctl input[type="range"] { width: 100%; accent-color: var(--accent); }
+.fm-ctl .val { color: var(--text); }
+
 .stage {
   flex: 1;
   display: grid;
@@ -160,4 +196,5 @@ select, .compose button {
   .chrome { grid-template-columns: 1fr; }
   .stage { grid-template-columns: 1fr; }
   .status { text-align: left; }
+  .fm-grid { grid-template-columns: 44px repeat(7, minmax(64px, 1fr)); }
 }

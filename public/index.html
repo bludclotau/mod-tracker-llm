@@ -39,6 +39,19 @@
       <button id="btn-preset" title="Use a local template from the prompt">PRESET</button>
     </section>
 
+    <section class="fm-panel" id="fm-panel">
+      <div class="fm-head">
+        <span class="prompt-label">FM VOICE</span>
+        <select id="fm-preset" aria-label="FM preset"></select>
+        <label class="fm-keys" title="Tracker keys sound this preset. Pattern playback stays on samples.">
+          <input id="fm-keys" type="checkbox" /> KEYS
+        </label>
+        <button type="button" id="fm-ping" title="Play C-4 on this preset">PING</button>
+        <span id="fm-hint">PING or KEYS · pattern playback stays on samples</span>
+      </div>
+      <div id="fm-controls"></div>
+    </section>
+
     <main class="stage">
       <aside class="samples">
         <h2>SAMPLES <span id="sample-count"></span></h2>
@@ -65,6 +78,7 @@
       <span>` note-off</span>
       <span>1–8 pick sample under cursor</span>
       <span>click sample to audition</span>
+      <span>FM KEYS audition</span>
     </footer>
   </div>
   <script type="module" src="/app.js"></script>

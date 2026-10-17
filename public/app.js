@@ -1,4 +1,6 @@
 import { NOTE_OFF, SampleVoice, isNoteOff } from "./audio/voice.js";
+import { FMVoice } from "./audio/fm-voice.js";
+import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
 
 /* MOD Tracker LLM — pattern editor + Web Audio player + Dolphin compose. */
 (() => {
@@ -43,7 +45,35 @@ import { NOTE_OFF, SampleVoice, isNoteOff } from "./audio/voice.js";
     timer: 0,
     octave: 4,
     selectedSample: 1,
+    fm: null,
+    fmPreset: null,
+    fmTicket: 0,
   };
+
+  const FM_GLOBALS = [
+    { id: "fmDepth", label: "depth", key: "depth", min: 0, max: 8, step: 0.01 },
+    { id: "feedback", label: "feedback", key: "feedback", min: 0, max: 3.14, step: 0.01 },
+    { id: "velSens", label: "vel", key: "velocity", min: 0, max: 1, step: 0.01 },
+  ];
+  const FM_OP_FIELDS = [
+    { suffix: "Ratio", label: "ratio", key: "ratio", min: 0.25, max: 12, step: 0.01 },
+    { suffix: "Detune", label: "detune", key: "detune", min: -100, max: 100, step: 1 },
+    { suffix: "Attack", label: "attack", key: "attack", min: 0.003, max: 4, step: 0.001 },
+    { suffix: "Decay", label: "decay", key: "decay", min: 0.003, max: 4, step: 0.001 },
+    { suffix: "Sustain", label: "sustain", key: "sustain", min: 0, max: 1, step: 0.01 },
+    { suffix: "Release", label: "release", key: "release", min: 0.003, max: 4, step: 0.001 },
+    { suffix: "Level", label: "level", key: "level", min: 0, max: 1, step: 0.01 },
+  ];
+
+  function fmParamId(opIndex, suffix) {
+    return (opIndex === 0 ? "op" : "car") + suffix;
+  }
+
+  function fmtSlider(step, value) {
+    if (step >= 1) return String(Math.round(Number(value)));
+    if (step >= 0.01) return Number(value).toFixed(2);
+    return Number(value).toFixed(3);
+  }
 
   function emptyCell() {
     return { note: null, sample: 0, volume: 0, effect: 0, param: 0 };
@@ -169,9 +199,11 @@ import { NOTE_OFF, SampleVoice, isNoteOff } from "./audio/voice.js";
   function stop() {
     state.playing = false;
     cancelAnimationFrame(state.timer);
+    state.fmTicket += 1;
     if (state.ctx && state.voices) {
       const t = state.ctx.currentTime;
       for (const voice of state.voices) voice.cut(t);
+      state.fm?.cut(t);
     }
     $("status").textContent = "stopped";
     $("status").className = "status";
@@ -300,11 +332,16 @@ import { NOTE_OFF, SampleVoice, isNoteOff } from "./audio/voice.js";
     cell.volume = cell.volume || 64;
     const el = document.querySelector(`.cell[data-r="${state.row}"][data-c="${state.ch}"]`);
     if (el) el.innerHTML = renderCell(cell);
-    const sample = state.byId.get(cell.sample);
-    if (sample) {
-      ensureAudio().then(() => decodeSample(sample)).then(() => {
-        playCell(cell, state.ctx.currentTime, state.ch, ROLES[state.ch]);
-      });
+    const velocity = (cell.volume || 64) / 64;
+    if (fmKeysOn()) {
+      auditionFm(midi, velocity, 0);
+    } else {
+      const sample = state.byId.get(cell.sample);
+      if (sample) {
+        ensureAudio().then(() => decodeSample(sample)).then(() => {
+          playCell(cell, state.ctx.currentTime, state.ch, ROLES[state.ch]);
+        });
+      }
     }
     state.row = (state.row + 1) % pat.rows;
     selectCell();
@@ -323,6 +360,7 @@ import { NOTE_OFF, SampleVoice, isNoteOff } from "./audio/voice.js";
     if (state.ctx && state.voices?.[state.ch]) {
       state.voices[state.ch].noteOff(state.ctx.currentTime);
     }
+    if (fmKeysOn()) noteOffFm();
     state.row = (state.row + 1) % pat.rows;
     selectCell();
   }
@@ -398,8 +436,147 @@ import { NOTE_OFF, SampleVoice, isNoteOff } from "./audio/voice.js";
     }
   }
 
+  function fmKeysOn() {
+    return Boolean($("fm-keys")?.checked);
+  }
+
+  function makeFmSlider(spec, get, set) {
+    const wrap = document.createElement("label");
+    wrap.className = "fm-ctl";
+    const input = document.createElement("input");
+    input.type = "range";
+    input.id = `fm-${spec.id}`;
+    input.dataset.param = spec.id;
+    input.min = String(spec.min);
+    input.max = String(spec.max);
+    input.step = String(spec.step);
+    input.title = spec.id;
+    const val = document.createElement("span");
+    val.className = "val";
+    if (spec.showName !== false) {
+      const name = document.createElement("span");
+      name.textContent = spec.label;
+      wrap.appendChild(name);
+    }
+    input.addEventListener("input", () => {
+      set(Number(input.value));
+      val.textContent = fmtSlider(spec.step, Number(input.value));
+      state.fm?.setPreset(state.fmPreset);
+    });
+    wrap.append(input, val);
+    wrap._fmGet = get;
+    wrap._fmInput = input;
+    return wrap;
+  }
+
+  function paintFmControls() {
+    document.querySelectorAll("#fm-controls .fm-ctl").forEach((wrap) => {
+      if (!wrap._fmInput || !wrap._fmGet) return;
+      const value = wrap._fmGet();
+      wrap._fmInput.value = String(value);
+      const step = Number(wrap._fmInput.step) || 0.01;
+      wrap.querySelector(".val").textContent = fmtSlider(step, value);
+    });
+  }
+
+  function setupFmPanel() {
+    state.fmPreset = clonePreset(FM_PRESETS[0]);
+    const select = $("fm-preset");
+    for (const preset of FM_PRESETS) {
+      const opt = document.createElement("option");
+      opt.value = preset.id;
+      opt.textContent = preset.name;
+      select.appendChild(opt);
+    }
+    const root = $("fm-controls");
+    const globals = document.createElement("div");
+    globals.className = "fm-globals";
+    for (const spec of FM_GLOBALS) {
+      globals.appendChild(makeFmSlider(
+        spec,
+        () => state.fmPreset[spec.key],
+        (value) => { state.fmPreset[spec.key] = value; },
+      ));
+    }
+    const grid = document.createElement("div");
+    grid.className = "fm-grid";
+    grid.appendChild(document.createElement("div"));
+    for (const spec of FM_OP_FIELDS) {
+      const head = document.createElement("div");
+      head.className = "fm-ctl";
+      head.textContent = spec.label;
+      grid.appendChild(head);
+    }
+    for (const [index, name] of [[0, "MOD"], [1, "CAR"]]) {
+      const label = document.createElement("div");
+      label.className = "fm-op-name";
+      label.textContent = name;
+      grid.appendChild(label);
+      for (const spec of FM_OP_FIELDS) {
+        const id = fmParamId(index, spec.suffix);
+        grid.appendChild(makeFmSlider(
+          { ...spec, id, showName: false },
+          () => state.fmPreset.ops[index][spec.key],
+          (value) => { state.fmPreset.ops[index][spec.key] = value; },
+        ));
+      }
+    }
+    root.append(globals, grid);
+    paintFmControls();
+    select.addEventListener("change", () => {
+      const found = FM_PRESETS.find((preset) => preset.id === select.value) || FM_PRESETS[0];
+      state.fmPreset = clonePreset(found);
+      paintFmControls();
+      state.fm?.setPreset(state.fmPreset);
+      $("fm-hint").textContent = found.name;
+    });
+    $("fm-keys").addEventListener("change", (ev) => {
+      if (!ev.target.checked && state.fm && state.ctx) state.fm.cut(state.ctx.currentTime);
+      $("fm-hint").textContent = ev.target.checked
+        ? "keys play FM · pattern still plays samples"
+        : "keys play samples";
+      ev.target.blur();
+    });
+    $("fm-ping").addEventListener("click", () => auditionFm(60, 0.9, 0.7));
+  }
+
+  async function ensureFm() {
+    await ensureAudio();
+    if (!state.fm) {
+      state.fm = new FMVoice(state.ctx, state.master);
+      state.fm.setPreset(state.fmPreset);
+    }
+    await state.fm.load();
+    return state.fm;
+  }
+
+  function auditionFm(midi, velocity, holdOff) {
+    const ticket = state.fmTicket;
+    ensureFm().then((fm) => {
+      if (ticket !== state.fmTicket) return;
+      if (!holdOff && !fmKeysOn()) return;
+      const t = state.ctx.currentTime + 0.01;
+      fm.noteOn(t, midi, velocity);
+      if (holdOff > 0) fm.noteOff(t + holdOff);
+      $("fm-hint").textContent = holdOff ? "ping C-4" : "fm keys";
+    }).catch((err) => {
+      $("fm-hint").textContent = String(err.message || err);
+    });
+  }
+
+  function noteOffFm() {
+    const ticket = state.fmTicket;
+    ensureFm().then((fm) => {
+      if (ticket !== state.fmTicket || !fmKeysOn()) return;
+      fm.noteOff(state.ctx.currentTime + 0.01);
+    }).catch((err) => {
+      $("fm-hint").textContent = String(err.message || err);
+    });
+  }
+
   async function boot() {
     applySong(defaultSong());
+    setupFmPanel();
     $("btn-play").addEventListener("click", play);
     $("btn-stop").addEventListener("click", stop);
     $("btn-compose").addEventListener("click", () => compose(false));
