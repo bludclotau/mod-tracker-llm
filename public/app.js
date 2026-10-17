@@ -2,6 +2,12 @@ import { NOTE_OFF, SampleVoice, isNoteOff } from "./audio/voice.js";
 import { FMVoice } from "./audio/fm-voice.js";
 import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
 import { resolveSound } from "./audio/layer.js";
+import {
+  SONG_VERSION,
+  migrateSong,
+  normalizeChannelFx,
+  resolveCatalogSample,
+} from "./audio/instruments.js";
 
 /* MOD Tracker LLM — pattern editor + Web Audio player + Dolphin compose. */
 (() => {
@@ -50,6 +56,8 @@ import { resolveSound } from "./audio/layer.js";
     fmPreset: null,
     fmTicket: 0,
     layerVoices: {},
+    channelFm: {},
+    instrumentSync: false,
   };
 
   const FM_GLOBALS = [
@@ -143,7 +151,7 @@ import { resolveSound } from "./audio/layer.js";
       return;
     }
     if (!cell?.sample || !cell.note) return;
-    const sample = state.byId.get(cell.sample);
+    const sample = resolveCatalogSample(cell.sample, state.song, state.samples);
     if (!sample) return;
     const buf = state.buffers.get(sample.id);
     if (!buf) return;
@@ -178,6 +186,32 @@ import { resolveSound } from "./audio/layer.js";
     voice.noteOn(when, midi, (cell.volume || 64) / 64);
   }
 
+  // An FM drum channel matches a layer: a rest posts nothing (hold), === is
+  // noteOff, and a new pitch retriggers inside the worklet. No cut() before
+  // noteOn, and the hat mute group does not run on this channel.
+  function playChannelFm(cell, when, ch) {
+    const voice = state.channelFm[ch]?.voice;
+    if (!voice) return;
+    if (isNoteOff(cell)) {
+      voice.noteOff(when);
+      return;
+    }
+    if (!cell?.note) return;
+    const midi = midiOf(cell.note);
+    if (midi == null) return;
+    voice.noteOn(when, midi, (cell.volume || 64) / 64);
+  }
+
+  function channelFmId(ch) {
+    const map = state.song?.channelInstrument;
+    if (!map) return null;
+    return map[ch] || map[String(ch)] || null;
+  }
+
+  function channelInput(ch) {
+    return state.strips?.[ch]?.input || state.master;
+  }
+
   function schedule() {
     if (!state.playing || !state.ctx) return;
     const ahead = 0.12;
@@ -186,8 +220,10 @@ import { resolveSound } from "./audio/layer.js";
     while (state.nextTime < state.ctx.currentTime + ahead) {
       const row = state.playRow;
       for (let ch = 0; ch < width; ch++) {
-        if (ch < 8) playCell(pat.data[ch][row], state.nextTime, ch, ROLES[ch]);
-        else playLayerCell(pat.data[ch][row], state.nextTime, ch);
+        const cell = pat.data[ch][row];
+        if (ch < 8 && channelFmId(ch)) playChannelFm(cell, state.nextTime, ch);
+        else if (ch < 8) playCell(cell, state.nextTime, ch, ROLES[ch]);
+        else playLayerCell(cell, state.nextTime, ch);
       }
       paintPlayhead(row);
       $("row-ind").textContent = hex2(row);
@@ -216,6 +252,7 @@ import { resolveSound } from "./audio/layer.js";
   async function play() {
     await ensureAudio();
     await preloadUsed();
+    await ensureChannelFmVoices();
     await ensureLayerVoices();
     state.playing = true;
     state.playRow = 0;
@@ -234,19 +271,26 @@ import { resolveSound } from "./audio/layer.js";
       for (const voice of state.voices) voice.cut(t);
       state.fm?.cut(t);
       for (const slot of Object.values(state.layerVoices)) slot.voice.cut(t);
+      for (const slot of Object.values(state.channelFm)) slot.voice.cut(t);
     }
     $("status").textContent = "stopped";
     $("status").className = "status";
   }
 
   async function preloadUsed() {
-    const ids = new Set();
     const pat = state.song.patterns[0];
-    for (const ch of pat.data) for (const cell of ch) if (cell.sample) ids.add(cell.sample);
-    await Promise.all([...ids].map((id) => {
-      const s = state.byId.get(id);
-      return s ? decodeSample(s) : null;
-    }));
+    const needed = [];
+    const seen = new Set();
+    for (const ch of pat.data) {
+      for (const cell of ch) {
+        if (!cell?.sample) continue;
+        const sample = resolveCatalogSample(cell.sample, state.song, state.samples);
+        if (!sample || seen.has(sample.id)) continue;
+        seen.add(sample.id);
+        needed.push(decodeSample(sample));
+      }
+    }
+    await Promise.all(needed);
   }
 
   async function preview(sample) {
@@ -261,6 +305,12 @@ import { resolveSound } from "./audio/layer.js";
 
   function applySong(song) {
     disposeLayerVoices();
+    disposeChannelFm();
+    migrateSong(song, state.samples);
+    const width = song.patterns?.[0]?.data?.length || 8;
+    if (state.ch >= width) state.ch = Math.max(0, width - 1);
+    const rows = song.patterns?.[0]?.rows || song.rows || 16;
+    if (state.row >= rows) state.row = 0;
     state.song = song;
     $("song-title").textContent = song.title || "Untitled";
     $("bpm").value = song.bpm || 90;
@@ -270,6 +320,7 @@ import { resolveSound } from "./audio/layer.js";
     $("llm-meta").textContent = meta;
     renderGrid();
     highlightKit();
+    syncChannelInstrument();
   }
 
   function renderSamples() {
@@ -323,7 +374,8 @@ import { resolveSound } from "./audio/layer.js";
     heads.appendChild(hash);
     for (let i = 0; i < 8 && i < width; i++) {
       const span = document.createElement("span");
-      span.textContent = `CH${i + 1} ${ROLES[i].toUpperCase()}`;
+      span.dataset.ch = String(i);
+      span.textContent = channelHeadLabel(i);
       heads.appendChild(span);
     }
     const layers = state.song.layers || [];
@@ -412,6 +464,7 @@ import { resolveSound } from "./audio/layer.js";
     const el = document.querySelector(`.cell[data-r="${state.row}"][data-c="${state.ch}"]`);
     el?.classList.add("sel");
     el?.scrollIntoView({ block: "nearest" });
+    syncChannelInstrument();
   }
 
   function putNote(midi) {
@@ -429,6 +482,15 @@ import { resolveSound } from "./audio/layer.js";
       selectCell();
       return;
     }
+    if (channelFmId(state.ch)) {
+      cell.note = fmtNote(midi);
+      cell.volume = cell.volume || 64;
+      paintCell(state.row, state.ch);
+      auditionChannelFm(state.ch, midi, (cell.volume || 64) / 64, 0);
+      state.row = (state.row + 1) % pat.rows;
+      selectCell();
+      return;
+    }
     cell.note = fmtNote(midi);
     cell.sample = state.selectedSample || cell.sample || 1;
     cell.volume = cell.volume || 64;
@@ -437,7 +499,7 @@ import { resolveSound } from "./audio/layer.js";
     if (fmKeysOn()) {
       auditionFm(midi, velocity, 0);
     } else {
-      const sample = state.byId.get(cell.sample);
+      const sample = resolveCatalogSample(cell.sample, state.song, state.samples);
       if (sample) {
         ensureAudio().then(() => decodeSample(sample)).then(() => {
           playCell(cell, state.ctx.currentTime, state.ch, ROLES[state.ch]);
@@ -452,13 +514,17 @@ import { resolveSound } from "./audio/layer.js";
     const pat = state.song.patterns[0];
     const cell = pat.data[state.ch][state.row];
     cell.note = NOTE_OFF;
-    cell.sample = 0;
     cell.volume = 0;
     cell.effect = 0;
     cell.param = 0;
+    const fmDrum = !isLayerChannel(state.ch) && channelFmId(state.ch);
+    if (!fmDrum) cell.sample = 0;
     paintCell(state.row, state.ch);
     if (isLayerChannel(state.ch)) {
       const voice = state.layerVoices[state.ch]?.voice;
+      if (voice && state.ctx) voice.noteOff(state.ctx.currentTime + 0.01);
+    } else if (fmDrum) {
+      const voice = state.channelFm[state.ch]?.voice;
       if (voice && state.ctx) voice.noteOff(state.ctx.currentTime + 0.01);
     } else {
       if (state.ctx && state.voices?.[state.ch]) {
@@ -786,12 +852,12 @@ import { resolveSound } from "./audio/layer.js";
     }
     pat.data.push(cells);
     const ch = pat.data.length - 1;
-    song.channelFx[ch] = {
+    song.channelFx[ch] = normalizeChannelFx({
       cutoff: Number(layer.channelFx?.cutoff) || 3400,
       resonance: Number(layer.channelFx?.resonance) || 0.7,
       drive: Number(layer.channelFx?.drive) || 0,
       fxWet: Number(layer.channelFx?.fxWet) || 0,
-    };
+    });
     song.channels = pat.data.length;
     renderGrid();
     ensureLayerVoice(ch).catch((err) => {
@@ -859,9 +925,178 @@ import { resolveSound } from "./audio/layer.js";
     auditionLayer(ch, midiOf(noteCell?.note) ?? 60, 0.8, 0.7);
   }
 
+  function channelHeadLabel(i) {
+    const base = `CH${i + 1} ${ROLES[i].toUpperCase()}`;
+    const id = channelFmId(i);
+    if (!id) return base;
+    const inst = (state.song.instruments || []).find((item) => item.id === id);
+    if (!inst || inst.type !== "fm") return base;
+    return `${base} · ${String(inst.preset || "fm").toUpperCase()}`;
+  }
+
+  function syncChannelInstrument() {
+    const sel = $("ch-instrument");
+    if (!sel || !state.song) return;
+    state.instrumentSync = true;
+    const ch = state.ch;
+    const hint = $("ch-instrument-hint");
+    if (ch > 7) {
+      sel.value = "";
+      sel.disabled = true;
+      if (hint) hint.textContent = "layer channel";
+    } else {
+      sel.disabled = false;
+      const id = channelFmId(ch);
+      const inst = (state.song.instruments || []).find((item) => item.id === id);
+      const preset = inst?.type === "fm" ? (inst.preset || "") : "";
+      const known = [...sel.options].some((opt) => opt.value === preset);
+      sel.value = known ? preset : "";
+      if (hint) {
+        const role = (ROLES[ch] || "ch").toUpperCase();
+        hint.textContent = preset ? `${role} · ${inst.name || preset}` : `${role} · drum sample`;
+      }
+    }
+    state.instrumentSync = false;
+  }
+
+  function dropUnusedBoundInstrument(id) {
+    if (!id || !state.song) return;
+    const song = state.song;
+    const inst = (song.instruments || []).find((item) => item.id === id);
+    if (!inst || inst.boundChannel == null) return;
+    const used = Object.values(song.channelInstrument || {}).some((item) => item === id)
+      || (song.layers || []).some((layer) => layer.instrumentId === id);
+    if (used) return;
+    song.instruments = song.instruments.filter((item) => item.id !== id);
+  }
+
+  function assignChannelFm(ch, presetId) {
+    if (ch < 0 || ch > 7 || !state.song) return;
+    const song = state.song;
+    song.instruments ||= [];
+    song.channelInstrument ||= {};
+    const prevId = channelFmId(ch);
+    if (!presetId) {
+      delete song.channelInstrument[ch];
+      delete song.channelInstrument[String(ch)];
+      dropChannelFm(ch);
+      dropUnusedBoundInstrument(prevId);
+      renderGrid();
+      selectCell();
+      return;
+    }
+    const preset = FM_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    let inst = song.instruments.find((item) =>
+      item.type === "fm" && item.preset === presetId && item.boundChannel === ch);
+    if (!inst) {
+      inst = {
+        id: uniqueInstrumentId(`fm-${presetId}-ch${ch + 1}`),
+        type: "fm",
+        name: preset.name,
+        preset: presetId,
+        patch: {},
+        sound: clonePreset(preset),
+        boundChannel: ch,
+      };
+      song.instruments.push(inst);
+    }
+    song.channelInstrument[ch] = inst.id;
+    if (prevId && prevId !== inst.id) dropUnusedBoundInstrument(prevId);
+    dropChannelFm(ch);
+    ensureChannelFm(ch).catch((err) => {
+      $("status").textContent = String(err.message || err);
+      $("status").className = "status err";
+    });
+    renderGrid();
+    selectCell();
+  }
+
+  function dropChannelFm(ch) {
+    const slot = state.channelFm[ch];
+    if (!slot) return;
+    slot.dropped = true;
+    if (state.ctx) slot.voice.cut(state.ctx.currentTime);
+    slot.voice.node?.disconnect();
+    delete state.channelFm[ch];
+  }
+
+  function disposeChannelFm() {
+    for (const ch of Object.keys(state.channelFm)) dropChannelFm(Number(ch));
+    state.channelFm = {};
+  }
+
+  async function ensureChannelFm(ch) {
+    const id = channelFmId(ch);
+    if (!id) return null;
+    const existing = state.channelFm[ch];
+    if (existing?.ready && existing.instrumentId === id) return existing.ready;
+    if (existing) dropChannelFm(ch);
+    await ensureAudio();
+    const inst = (state.song.instruments || []).find((item) => item.id === id);
+    if (!inst) return null;
+    const voice = new FMVoice(state.ctx, channelInput(ch));
+    voice.setPreset(resolveSound(inst));
+    const slot = { voice, instrumentId: id, ready: null, dropped: false };
+    slot.ready = voice.load().then(() => {
+      if (slot.dropped) {
+        voice.node?.disconnect();
+        return null;
+      }
+      return slot;
+    });
+    state.channelFm[ch] = slot;
+    return slot.ready;
+  }
+
+  async function ensureChannelFmVoices() {
+    for (let ch = 0; ch < 8; ch++) {
+      if (channelFmId(ch)) await ensureChannelFm(ch);
+    }
+  }
+
+  function auditionChannelFm(ch, midi, velocity, holdOff) {
+    const ticket = state.fmTicket;
+    ensureChannelFm(ch).then((slot) => {
+      if (!slot || ticket !== state.fmTicket) return;
+      const t = state.ctx.currentTime + 0.01;
+      slot.voice.noteOn(t, midi, velocity);
+      if (holdOff > 0) slot.voice.noteOff(t + holdOff);
+    }).catch((err) => {
+      $("status").textContent = String(err.message || err);
+      $("status").className = "status err";
+    });
+  }
+
+  function setupChannelInstrument() {
+    const sel = $("ch-instrument");
+    if (!sel) return;
+    const drum = document.createElement("option");
+    drum.value = "";
+    drum.textContent = "drum sample";
+    sel.appendChild(drum);
+    for (const preset of FM_PRESETS) {
+      const opt = document.createElement("option");
+      opt.value = preset.id;
+      opt.textContent = preset.name;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener("change", () => {
+      if (state.instrumentSync) return;
+      const presetId = sel.value;
+      sel.blur();
+      if (state.ch > 7) {
+        syncChannelInstrument();
+        return;
+      }
+      assignChannelFm(state.ch, presetId);
+    });
+    syncChannelInstrument();
+  }
+
   function saveProject() {
     const song = structuredClone(state.song);
-    song.version = 1;
+    song.version = SONG_VERSION;
     const blob = new Blob([JSON.stringify(song, null, 2)], { type: "application/json" });
     const link = document.createElement("a");
     const name = String(song.title || "song").replace(/[^\w.-]+/g, "-").replace(/^-|-$/g, "") || "song";
@@ -877,16 +1112,21 @@ import { resolveSound } from "./audio/layer.js";
     }
     const data = song.patterns[0].data;
     if (data.length < 8) throw new Error("pattern is missing drum channels");
-    song.instruments ||= [];
-    song.layers ||= [];
-    song.channelFx ||= {};
+    migrateSong(song, state.samples);
     song.rows = song.patterns[0].rows || data[0]?.length || 16;
     song.channels = data.length;
     while (song.layers.length < data.length - 8) {
       const index = song.layers.length;
-      let inst = song.instruments[index];
+      const used = new Set(song.layers.map((layer) => layer.instrumentId));
+      let inst = song.instruments.find((item) => item?.type === "fm" && item.boundChannel == null && !used.has(item.id));
       if (!inst) {
-        inst = { id: `fm-lead-${index + 1}`, type: "fm", name: "Lead", preset: "lead", patch: {} };
+        let n = index + 1;
+        let id = `fm-lead-${n}`;
+        while (song.instruments.some((item) => item.id === id)) {
+          n += 1;
+          id = `fm-lead-${n}`;
+        }
+        inst = { id, type: "fm", name: "Lead", preset: "lead", patch: {} };
         song.instruments.push(inst);
       }
       song.layers.push({
@@ -898,6 +1138,10 @@ import { resolveSound } from "./audio/layer.js";
     }
     if (state.playing) stop();
     applySong(song);
+    ensureChannelFmVoices().catch((err) => {
+      $("status").textContent = String(err.message || err);
+      $("status").className = "status err";
+    });
     ensureLayerVoices().catch((err) => {
       $("status").textContent = String(err.message || err);
       $("status").className = "status err";
@@ -949,6 +1193,7 @@ import { resolveSound } from "./audio/layer.js";
   async function boot() {
     applySong(defaultSong());
     setupFmPanel();
+    setupChannelInstrument();
     $("btn-play").addEventListener("click", play);
     $("btn-stop").addEventListener("click", stop);
     $("btn-compose").addEventListener("click", () => compose(false));
@@ -989,6 +1234,7 @@ import { resolveSound } from "./audio/layer.js";
       const health = await healthRes.json();
       state.samples = samples.samples || [];
       state.byId = new Map(state.samples.map((s) => [s.id, s]));
+      if (state.song) migrateSong(state.song, state.samples);
       renderSamples();
       const dol = health.nodes?.find((n) => n.name === "dolphin");
       $("status").textContent = dol?.ok

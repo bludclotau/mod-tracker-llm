@@ -59,12 +59,22 @@ The reply is one instrument, a channel FX suggestion, and 16 cells:
 ```
 
 `sound` is the preset after the macro overrides, ready for `FMVoice.setPreset`.
-There is no separate instrument table in this build: `song.instruments[]`
-holds these FM layers only. Drums stay on `song.kit`.
+`song.instruments[]` records both kinds of instrument. Drums stay in
+`cell.sample` and in `song.kit`. On load, each used catalog id is copied to
+`{ type: "sample", id, file, name, role }` when that file is not already
+listed, so a later WAV reorder still resolves. FM entries keep a string id
+(`fm-lead`, `fm-bass-ch8`).
 
-`channelFx.cutoff` and `channelFx.resonance` are a lowpass on that layer's
-voice. `drive` and `fxWet` are stored and not heard. There is no per-channel
-DSP strip.
+`song.channelInstrument` assigns an FM id to a drum channel (0–7). The
+channel head stays `CH1 KICK` and can add the preset (`CH8 BASS · BASS`).
+Playback of that channel uses the cell note: a rest holds, `===` releases,
+and a new pitch retriggers inside the worklet. The kit sample id stays in
+the cell. Sample channels, including the hat mute group, are unchanged. An
+FM channel does not join that mute group.
+
+`channelFx.cutoff` and `channelFx.resonance` are a lowpass on a layer voice.
+`drive` and `fxWet` are stored and not heard. There is no per-channel DSP
+strip yet.
 
 ### Grammar
 
@@ -144,10 +154,12 @@ samples.
 
 ## Project file
 
-**SAVE** downloads the song as JSON with `version: 1`. **LOAD** reads it back.
-The file includes `instruments`, `layers` (including mute), `channelFx`, and
-the extra pattern columns. A drum song from before this field, with no
-`version` and eight columns, still loads and plays.
+**SAVE** downloads the song as JSON with `version: 2`. **LOAD** reads it back,
+including a missing version or version 1. The file includes `instruments`,
+`channelInstrument`, `layers` (including mute), `channelFx`, and the extra
+pattern columns. A drum song with eight columns and no version still loads
+and plays. The compose HTTP response has no `instruments` key. The page adds
+sample instruments after the catalog loads.
 
 ## Playback
 
@@ -170,8 +182,10 @@ ticks per row) and the scheduler does not read it. The scheduler looks ahead
 | `noteOff(time)` | envelope release. Cell token `===`. Drum one-shots ignore it |
 | `cut(time)` | silence with a 10 ms ramp, then stop the source 50 ms later |
 
-There is no legato. A new note cuts the previous note on that channel before
-`noteOn`. A hat sample cuts both hat channels. The cut is stamped with
+There is no legato. A new note on a sample channel cuts the previous note
+on that channel before `noteOn`. A hat sample cuts both hat channels. An
+FM-assigned drum channel does not cut before `noteOn`. A rest on that
+channel posts nothing. The cut is stamped with
 `currentTime` when the row is scheduled, so a stolen sample can start fading
 up to one lookahead early. `noteOn` and `noteOff` use the row time itself.
 `SampleVoice` is the drum implementation of this interface. Pattern commands
@@ -198,12 +212,15 @@ preset moves).
 
 The worklet applies a note at the sample whose audio-clock time reaches the
 timestamp on the message. The pattern scheduler already looks ahead 120 ms
-and has those timestamps. Drum channels stay on samples. A **LAYER** channel
-plays this voice: a rest sends nothing, so the envelope holds, and `===`
-releases it. **PING** plays C-4 on the selected preset. **KEYS** sends the
-tracker keyboard (`Z–M` / `Q–U`, `` ` `` for note-off) to the audition FM
-voice instead of the sample. The key still writes the cell. KEYS defaults
-off, and it does not change drum-channel playback.
+and has those timestamps. Drum channels stay on samples unless **CH INST**
+assigns an FM preset to the selected drum channel. That assignment does not
+change the other channels. A **LAYER** channel plays this voice: a rest
+sends nothing, so the envelope holds, and `===` releases it. **PING** plays
+C-4 on the selected preset. **KEYS** sends the tracker keyboard (`Z–M` /
+`Q–U`, `` ` `` for note-off) to the audition FM voice instead of the sample.
+The key still writes the cell. KEYS defaults off. On an FM-assigned drum
+channel the key writes the note, leaves `cell.sample` in place, and auditions
+that channel's voice.
 
 Presets: E-Piano, Bell, FM Bass, Pluck, Lead, Pad. Edits on this panel last
 until you pick another preset. They do not edit a layer that is already in
@@ -252,3 +269,16 @@ In the browser: **PRESET** a beat, **LAYER** the lead prompt, press **PLAY**
 (drums and the new channel together), **MUTE** / **HEAR** / **X** the header,
 then **SAVE** and **LOAD**. **PRESET** again clears the layer and the drums
 still play.
+
+## Check the instruments
+
+```sh
+node scripts/verify-instruments.mjs
+```
+
+That checks migration, file remap, and channel FX defaults. In the browser,
+**PRESET** a beat, press **PLAY**, and the drum samples still start. Select
+the bass column, set **CH INST** to FM Bass, press **PLAY**: the kick still
+plays its sample and the bass column plays FM at the written pitch (`C-1`
+on the drum templates). **SAVE** writes `version: 2` and a sample instrument
+for each kit file. `cell.sample` on those drum cells is unchanged.

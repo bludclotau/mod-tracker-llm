@@ -1,7 +1,8 @@
 /**
  * Main-thread FM voice. Same calls as SampleVoice: noteOn, noteOff, cut.
  * The preset lives on the voice (setPreset), the way a sample lives on
- * SampleVoice.buffer. Drum channels do not use this. Layer channels do.
+ * SampleVoice.buffer. A drum channel uses this only when the song assigns
+ * an FM instrument to it. A layer channel always uses this.
  *
  * noteOn retriggers inside the worklet with a 5 ms fade. Callers should not
  * cut() and noteOn() at the same timestamp: the cut would win and the new
