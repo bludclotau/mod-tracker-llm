@@ -1,6 +1,7 @@
 import { NOTE_OFF, SampleVoice, isNoteOff } from "./audio/voice.js";
 import { FMVoice } from "./audio/fm-voice.js";
 import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
+import { resolveSound } from "./audio/layer.js";
 
 /* MOD Tracker LLM — pattern editor + Web Audio player + Dolphin compose. */
 (() => {
@@ -48,6 +49,7 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
     fm: null,
     fmPreset: null,
     fmTicket: 0,
+    layerVoices: {},
   };
 
   const FM_GLOBALS = [
@@ -158,14 +160,34 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
     voice.noteOn(when, midi, (cell.volume || 64) / 64);
   }
 
+  // Layer channels do not cut on a new note. A rest posts nothing, so the
+  // envelope stays in sustain until a "===" cell calls noteOff. A new pitch
+  // retriggers inside the worklet (5 ms fade, envelopes restart).
+  function playLayerCell(cell, when, ch) {
+    const layer = state.song.layers?.[ch - 8];
+    if (!layer || layer.mute) return;
+    const voice = state.layerVoices[ch]?.voice;
+    if (!voice) return;
+    if (isNoteOff(cell)) {
+      voice.noteOff(when);
+      return;
+    }
+    if (!cell?.note) return;
+    const midi = midiOf(cell.note);
+    if (midi == null) return;
+    voice.noteOn(when, midi, (cell.volume || 64) / 64);
+  }
+
   function schedule() {
     if (!state.playing || !state.ctx) return;
     const ahead = 0.12;
     const pat = state.song.patterns[0];
+    const width = pat.data.length;
     while (state.nextTime < state.ctx.currentTime + ahead) {
       const row = state.playRow;
-      for (let ch = 0; ch < 8; ch++) {
-        playCell(pat.data[ch][row], state.nextTime, ch, ROLES[ch]);
+      for (let ch = 0; ch < width; ch++) {
+        if (ch < 8) playCell(pat.data[ch][row], state.nextTime, ch, ROLES[ch]);
+        else playLayerCell(pat.data[ch][row], state.nextTime, ch);
       }
       paintPlayhead(row);
       $("row-ind").textContent = hex2(row);
@@ -182,12 +204,19 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
     const rowEl = document.querySelector(`[data-row="${row}"]`);
     rowEl?.classList.add("row-on");
     document.querySelectorAll(`.cell[data-r="${row}"]`).forEach((el) => el.classList.add("play"));
-    rowEl?.scrollIntoView({ block: "nearest" });
+    const wrap = $("grid-wrap");
+    if (wrap && rowEl) {
+      const wr = wrap.getBoundingClientRect();
+      const rr = rowEl.getBoundingClientRect();
+      if (rr.top < wr.top) wrap.scrollTop -= wr.top - rr.top;
+      else if (rr.bottom > wr.bottom) wrap.scrollTop += rr.bottom - wr.bottom;
+    }
   }
 
   async function play() {
     await ensureAudio();
     await preloadUsed();
+    await ensureLayerVoices();
     state.playing = true;
     state.playRow = 0;
     state.nextTime = state.ctx.currentTime + 0.05;
@@ -204,6 +233,7 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
       const t = state.ctx.currentTime;
       for (const voice of state.voices) voice.cut(t);
       state.fm?.cut(t);
+      for (const slot of Object.values(state.layerVoices)) slot.voice.cut(t);
     }
     $("status").textContent = "stopped";
     $("status").className = "status";
@@ -230,6 +260,7 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
   }
 
   function applySong(song) {
+    disposeLayerVoices();
     state.song = song;
     $("song-title").textContent = song.title || "Untitled";
     $("bpm").value = song.bpm || 90;
@@ -275,11 +306,28 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
     });
   }
 
+  function layoutColumns(n) {
+    const cols = `40px repeat(${n}, minmax(132px, 1fr))`;
+    $("channel-heads").style.gridTemplateColumns = cols;
+    $("grid").style.gridTemplateColumns = cols;
+  }
+
   function renderGrid() {
     const pat = state.song.patterns[0];
+    const width = pat.data.length;
+    layoutColumns(width);
     const heads = $("channel-heads");
-    heads.innerHTML = "<span>#</span>" + ROLES.map((r, i) =>
-      `<span>CH${i + 1} ${r.toUpperCase()}</span>`).join("");
+    heads.innerHTML = "";
+    const hash = document.createElement("span");
+    hash.textContent = "#";
+    heads.appendChild(hash);
+    for (let i = 0; i < 8 && i < width; i++) {
+      const span = document.createElement("span");
+      span.textContent = `CH${i + 1} ${ROLES[i].toUpperCase()}`;
+      heads.appendChild(span);
+    }
+    const layers = state.song.layers || [];
+    for (let i = 0; i < width - 8; i++) heads.appendChild(layerHead(layers[i], i));
     const grid = $("grid");
     grid.innerHTML = "";
     for (let r = 0; r < pat.rows; r++) {
@@ -288,10 +336,11 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
       rn.dataset.row = r;
       rn.textContent = hex2(r);
       grid.appendChild(rn);
-      for (let c = 0; c < 8; c++) {
+      for (let c = 0; c < width; c++) {
         const cell = pat.data[c][r];
         const el = document.createElement("div");
         el.className = "cell";
+        if (c >= 8 && layers[c - 8]?.mute) el.classList.add("muted");
         el.dataset.r = r;
         el.dataset.c = c;
         el.innerHTML = renderCell(cell);
@@ -306,6 +355,37 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
     }
   }
 
+  function layerHead(layer, index) {
+    const wrap = document.createElement("div");
+    wrap.className = "ch-head" + (layer?.mute ? " muted" : "");
+    wrap.dataset.layer = String(index);
+    const name = document.createElement("span");
+    name.className = "ch-name";
+    name.textContent = `CH${9 + index} ${(layer?.name || "FM").toUpperCase()}`;
+    const actions = document.createElement("div");
+    actions.className = "ch-actions";
+    actions.append(
+      miniButton(layer?.mute ? "MUTED" : "MUTE", () => toggleLayerMute(index)),
+      miniButton("HEAR", () => auditionLayerChannel(index)),
+      miniButton("X", () => removeLayer(index)),
+    );
+    wrap.append(name, actions);
+    return wrap;
+  }
+
+  function miniButton(label, onClick) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onClick();
+      btn.blur();
+    });
+    return btn;
+  }
+
   function renderCell(cell) {
     if (isNoteOff(cell)) {
       return `<span class="n off">===</span> <span class="s">--</span> <span class="v">--</span>`;
@@ -313,8 +393,18 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
     if (!cell?.note && !cell?.sample) return "--- -- --";
     const n = cell.note || "---";
     const s = cell.sample ? hex2(cell.sample) : "--";
-    const v = cell.sample ? hex2(cell.volume || 64) : "--";
+    const v = cell.note || cell.sample ? hex2(cell.volume || 64) : "--";
     return `<span class="n">${n}</span> <span class="s">${s}</span> <span class="v">${v}</span>`;
+  }
+
+  function paintCell(r, c) {
+    const el = document.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+    if (el) el.innerHTML = renderCell(state.song.patterns[0].data[c][r]);
+  }
+
+  function isLayerChannel(ch) {
+    const width = state.song?.patterns?.[0]?.data?.length || 8;
+    return ch >= 8 && ch < width;
   }
 
   function selectCell() {
@@ -327,11 +417,22 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
   function putNote(midi) {
     const pat = state.song.patterns[0];
     const cell = pat.data[state.ch][state.row];
+    if (isLayerChannel(state.ch)) {
+      cell.note = fmtNote(midi);
+      cell.sample = 0;
+      cell.volume = cell.volume || 64;
+      cell.effect = 0;
+      cell.param = 0;
+      paintCell(state.row, state.ch);
+      auditionLayer(state.ch, midi, (cell.volume || 64) / 64, 0);
+      state.row = (state.row + 1) % pat.rows;
+      selectCell();
+      return;
+    }
     cell.note = fmtNote(midi);
     cell.sample = state.selectedSample || cell.sample || 1;
     cell.volume = cell.volume || 64;
-    const el = document.querySelector(`.cell[data-r="${state.row}"][data-c="${state.ch}"]`);
-    if (el) el.innerHTML = renderCell(cell);
+    paintCell(state.row, state.ch);
     const velocity = (cell.volume || 64) / 64;
     if (fmKeysOn()) {
       auditionFm(midi, velocity, 0);
@@ -355,12 +456,16 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
     cell.volume = 0;
     cell.effect = 0;
     cell.param = 0;
-    const el = document.querySelector(`.cell[data-r="${state.row}"][data-c="${state.ch}"]`);
-    if (el) el.innerHTML = renderCell(cell);
-    if (state.ctx && state.voices?.[state.ch]) {
-      state.voices[state.ch].noteOff(state.ctx.currentTime);
+    paintCell(state.row, state.ch);
+    if (isLayerChannel(state.ch)) {
+      const voice = state.layerVoices[state.ch]?.voice;
+      if (voice && state.ctx) voice.noteOff(state.ctx.currentTime + 0.01);
+    } else {
+      if (state.ctx && state.voices?.[state.ch]) {
+        state.voices[state.ch].noteOff(state.ctx.currentTime);
+      }
+      if (fmKeysOn()) noteOffFm();
     }
-    if (fmKeysOn()) noteOffFm();
     state.row = (state.row + 1) % pat.rows;
     selectCell();
   }
@@ -411,9 +516,14 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
         ev.preventDefault();
         compose(false);
       }
+      if (ev.key === "Enter" && ev.target.id === "layer-prompt") {
+        ev.preventDefault();
+        composeLayer();
+      }
       return;
     }
     const pat = state.song.patterns[0];
+    const width = pat.data.length;
     if (ev.code === "Space") {
       ev.preventDefault();
       state.playing ? stop() : play();
@@ -421,8 +531,8 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
     }
     if (ev.key === "ArrowDown") { state.row = (state.row + 1) % pat.rows; selectCell(); ev.preventDefault(); }
     if (ev.key === "ArrowUp") { state.row = (state.row + pat.rows - 1) % pat.rows; selectCell(); ev.preventDefault(); }
-    if (ev.key === "ArrowRight") { state.ch = (state.ch + 1) % 8; selectCell(); ev.preventDefault(); }
-    if (ev.key === "ArrowLeft") { state.ch = (state.ch + 7) % 8; selectCell(); ev.preventDefault(); }
+    if (ev.key === "ArrowRight") { state.ch = (state.ch + 1) % width; selectCell(); ev.preventDefault(); }
+    if (ev.key === "ArrowLeft") { state.ch = (state.ch + width - 1) % width; selectCell(); ev.preventDefault(); }
     if (ev.key === "Delete" || ev.key === "Backspace") { clearCell(); ev.preventDefault(); }
     if (ev.code === "Backquote") { putNoteOff(); ev.preventDefault(); return; }
     const k = ev.key.toLowerCase();
@@ -574,6 +684,223 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
     });
   }
 
+  function disposeLayerVoices() {
+    const t = state.ctx?.currentTime;
+    for (const slot of Object.values(state.layerVoices)) {
+      slot.dropped = true;
+      if (t != null) slot.voice.cut(t);
+      slot.voice.node?.disconnect();
+      slot.filter?.disconnect();
+    }
+    state.layerVoices = {};
+  }
+
+  function dropLayerVoice(ch) {
+    const slot = state.layerVoices[ch];
+    if (!slot) return;
+    slot.dropped = true;
+    if (state.ctx) slot.voice.cut(state.ctx.currentTime);
+    slot.voice.node?.disconnect();
+    slot.filter?.disconnect();
+    delete state.layerVoices[ch];
+  }
+
+  async function ensureLayerVoice(ch) {
+    const existing = state.layerVoices[ch];
+    if (existing?.ready) return existing.ready;
+    const layer = state.song.layers?.[ch - 8];
+    if (!layer) return null;
+    await ensureAudio();
+    const inst = (state.song.instruments || []).find((item) => item.id === layer.instrumentId);
+    if (!inst) return null;
+    const fx = state.song.channelFx?.[ch] || {};
+    const filter = state.ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    const now = state.ctx.currentTime;
+    filter.frequency.setValueAtTime(Number(fx.cutoff) || 3400, now);
+    filter.Q.setValueAtTime(Number(fx.resonance) || 0.7, now);
+    filter.connect(state.master);
+    const voice = new FMVoice(state.ctx, filter);
+    voice.setPreset(resolveSound(inst));
+    const slot = { voice, filter, ready: null, dropped: false };
+    slot.ready = voice.load().then(() => {
+      if (slot.dropped) {
+        voice.node?.disconnect();
+        filter.disconnect();
+        return null;
+      }
+      return slot;
+    });
+    state.layerVoices[ch] = slot;
+    return slot.ready;
+  }
+
+  async function ensureLayerVoices() {
+    const n = state.song?.layers?.length || 0;
+    for (let i = 0; i < n; i++) await ensureLayerVoice(8 + i);
+  }
+
+  function hitsFromChannel(ch) {
+    const column = state.song?.patterns?.[0]?.data?.[ch] || [];
+    return column.map((cell) => (cell?.note && !isNoteOff(cell) ? "x" : ".")).join("").padEnd(16, ".").slice(0, 16);
+  }
+
+  function uniqueInstrumentId(base) {
+    const ids = new Set((state.song.instruments || []).map((item) => item.id));
+    if (!ids.has(base)) return base;
+    let n = 2;
+    while (ids.has(`${base}-${n}`)) n += 1;
+    return `${base}-${n}`;
+  }
+
+  function appendLayer(layer) {
+    const song = state.song;
+    song.instruments ||= [];
+    song.layers ||= [];
+    song.channelFx ||= {};
+    const preset = layer.instrument?.preset || "lead";
+    const id = uniqueInstrumentId(layer.instrument?.id || `fm-${preset}`);
+    const instrument = {
+      id,
+      type: "fm",
+      name: layer.instrument?.name || preset,
+      preset,
+      patch: layer.instrument?.patch || {},
+      sound: layer.instrument?.sound,
+    };
+    song.instruments.push(instrument);
+    song.layers.push({ id, name: instrument.name, instrumentId: id, mute: false });
+    const pat = song.patterns[0];
+    const rows = pat.rows || 16;
+    const cells = [];
+    for (let i = 0; i < rows; i++) {
+      const src = layer.cells?.[i];
+      const note = src?.note ?? null;
+      cells.push({
+        note,
+        sample: 0,
+        volume: note && !isNoteOff(src) ? (src.volume || 64) : 0,
+        effect: 0,
+        param: 0,
+      });
+    }
+    pat.data.push(cells);
+    const ch = pat.data.length - 1;
+    song.channelFx[ch] = {
+      cutoff: Number(layer.channelFx?.cutoff) || 3400,
+      resonance: Number(layer.channelFx?.resonance) || 0.7,
+      drive: Number(layer.channelFx?.drive) || 0,
+      fxWet: Number(layer.channelFx?.fxWet) || 0,
+    };
+    song.channels = pat.data.length;
+    renderGrid();
+    ensureLayerVoice(ch).catch((err) => {
+      $("status").textContent = String(err.message || err);
+      $("status").className = "status err";
+    });
+  }
+
+  function toggleLayerMute(index) {
+    const layer = state.song.layers?.[index];
+    if (!layer) return;
+    layer.mute = !layer.mute;
+    if (layer.mute && state.ctx) state.layerVoices[8 + index]?.voice.cut(state.ctx.currentTime);
+    renderGrid();
+  }
+
+  function removeLayer(index) {
+    const song = state.song;
+    const ch = 8 + index;
+    const layer = song.layers?.[index];
+    if (!layer || !song.patterns[0].data[ch]) return;
+    dropLayerVoice(ch);
+    song.layers.splice(index, 1);
+    song.patterns[0].data.splice(ch, 1);
+    if (!song.layers.some((item) => item.instrumentId === layer.instrumentId)) {
+      song.instruments = (song.instruments || []).filter((item) => item.id !== layer.instrumentId);
+    }
+    const nextFx = {};
+    for (const [key, fx] of Object.entries(song.channelFx || {})) {
+      const n = Number(key);
+      if (!Number.isFinite(n) || n === ch) continue;
+      nextFx[n < ch ? n : n - 1] = fx;
+    }
+    song.channelFx = nextFx;
+    const nextVoices = {};
+    for (const [key, slot] of Object.entries(state.layerVoices)) {
+      const n = Number(key);
+      if (n < ch) nextVoices[n] = slot;
+      else if (n > ch) nextVoices[n - 1] = slot;
+    }
+    state.layerVoices = nextVoices;
+    song.channels = song.patterns[0].data.length;
+    if (state.ch >= song.channels) state.ch = song.channels - 1;
+    renderGrid();
+    selectCell();
+  }
+
+  function auditionLayer(ch, midi, velocity, holdOff) {
+    const ticket = state.fmTicket;
+    ensureLayerVoice(ch).then((slot) => {
+      if (!slot || ticket !== state.fmTicket) return;
+      const t = state.ctx.currentTime + 0.01;
+      slot.voice.noteOn(t, midi, velocity);
+      if (holdOff > 0) slot.voice.noteOff(t + holdOff);
+    }).catch((err) => {
+      $("status").textContent = String(err.message || err);
+      $("status").className = "status err";
+    });
+  }
+
+  function auditionLayerChannel(index) {
+    const ch = 8 + index;
+    const column = state.song.patterns[0].data[ch] || [];
+    const noteCell = column.find((cell) => cell?.note && !isNoteOff(cell));
+    auditionLayer(ch, midiOf(noteCell?.note) ?? 60, 0.8, 0.7);
+  }
+
+  async function composeLayer() {
+    const prompt = $("layer-prompt").value.trim();
+    if (!prompt) {
+      $("status").textContent = "layer prompt required";
+      $("status").className = "status err";
+      return;
+    }
+    $("status").textContent = "layer composing…";
+    $("status").className = "status busy";
+    $("btn-layer").disabled = true;
+    try {
+      const res = await fetch("/api/compose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "layer",
+          prompt,
+          node: $("node").value,
+          song: {
+            bpm: Number($("bpm").value) || state.song?.bpm || 90,
+            kick: hitsFromChannel(0),
+            bass: hitsFromChannel(7),
+          },
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "layer failed");
+      if (!Array.isArray(body.cells) || !body.instrument) throw new Error("layer missing");
+      appendLayer(body);
+      const via = body.llm?.model ? String(body.llm.model).split(/[\\/]/).pop() : body.llm?.provider;
+      $("status").textContent = body.llm?.ok
+        ? `layer ${body.instrument.preset} via ${body.llm.provider} (${via})`
+        : `layer ${body.instrument.preset} fallback`;
+      $("status").className = body.llm?.ok ? "status ok" : "status";
+    } catch (err) {
+      $("status").textContent = String(err.message || err);
+      $("status").className = "status err";
+    } finally {
+      $("btn-layer").disabled = false;
+    }
+  }
+
   async function boot() {
     applySong(defaultSong());
     setupFmPanel();
@@ -581,6 +908,7 @@ import { FM_PRESETS, clonePreset } from "./audio/fm-presets.js";
     $("btn-stop").addEventListener("click", stop);
     $("btn-compose").addEventListener("click", () => compose(false));
     $("btn-preset").addEventListener("click", () => compose(true));
+    $("btn-layer").addEventListener("click", () => composeLayer());
     $("master").addEventListener("input", () => {
       if (!state.master || !state.ctx) return;
       // Exponential approach from the value already playing. Time constant

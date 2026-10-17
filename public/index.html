@@ -39,6 +39,13 @@
       <button id="btn-preset" title="Use a local template from the prompt">PRESET</button>
     </section>
 
+    <section class="compose layer-compose">
+      <label class="prompt-label" for="layer-prompt">LLM LAYER</label>
+      <input id="layer-prompt" type="text" maxlength="240"
+        placeholder="a lead synth pad melody" />
+      <button id="btn-layer" type="button" title="Add an FM melody on top of the current drums">LAYER</button>
+    </section>
+
     <section class="fm-panel" id="fm-panel">
       <div class="fm-head">
         <span class="prompt-label">FM VOICE</span>
@@ -47,7 +54,7 @@
           <input id="fm-keys" type="checkbox" /> KEYS
         </label>
         <button type="button" id="fm-ping" title="Play C-4 on this preset">PING</button>
-        <span id="fm-hint">PING or KEYS · pattern playback stays on samples</span>
+        <span id="fm-hint">PING or KEYS · drums stay on samples</span>
       </div>
       <div id="fm-controls"></div>
     </section>
@@ -63,8 +70,8 @@
           <span id="song-title">Untitled</span>
           <span id="llm-meta"></span>
         </div>
-        <div class="channels" id="channel-heads"></div>
         <div class="grid-wrap" id="grid-wrap">
+          <div class="channels" id="channel-heads"></div>
           <div id="grid"></div>
         </div>
       </section>
@@ -79,6 +86,7 @@
       <span>1–8 pick sample under cursor</span>
       <span>click sample to audition</span>
       <span>FM KEYS audition</span>
+      <span>LAYER adds an FM channel</span>
     </footer>
   </div>
   <script type="module" src="/app.js"></script>

@@ -76,16 +76,18 @@ h1 { margin: 0; font-size: 16px; letter-spacing: 0.12em; }
   border-bottom: 1px solid var(--line);
 }
 .prompt-label { color: var(--accent); letter-spacing: 0.08em; font-size: 11px; }
-#prompt {
+.layer-compose { grid-template-columns: auto 1fr auto; }
+#prompt, #layer-prompt {
   background: #0b0e14; color: var(--text); border: 1px solid var(--line);
   padding: 8px 10px; font: inherit;
 }
-#prompt:focus { outline: 1px solid var(--accent); }
+#prompt:focus, #layer-prompt:focus { outline: 1px solid var(--accent); }
 select, .compose button {
   background: #1c2433; color: var(--text); border: 1px solid var(--line);
   padding: 8px 10px; font: inherit; cursor: pointer;
 }
 #btn-compose { color: var(--inst); }
+#btn-layer { color: var(--note); }
 
 .fm-panel {
   background: #0d1118;
@@ -158,18 +160,37 @@ select, .compose button {
 .channels {
   display: grid;
   grid-template-columns: 40px repeat(8, 1fr);
-  padding: 6px 8px 4px;
+  padding: 6px 0 4px;
   color: var(--dim);
   background: #0d1118;
   border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
 }
 .channels span { text-align: center; font-size: 11px; letter-spacing: 0.06em; }
+.ch-head { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
+.ch-head .ch-name { color: var(--inst); }
+.ch-head.muted .ch-name { color: var(--dim); }
+.ch-actions { display: flex; gap: 3px; }
+.ch-actions button {
+  background: #1c2433; color: var(--dim); border: 1px solid var(--line);
+  font: inherit; font-size: 10px; letter-spacing: 0.04em;
+  padding: 1px 4px; cursor: pointer;
+}
+.ch-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.cell.muted { opacity: 0.35; }
 
 .grid-wrap { flex: 1; overflow: auto; background: #080a10; }
 #grid {
   display: grid;
   grid-template-columns: 40px repeat(8, minmax(132px, 1fr));
   font-variant-numeric: tabular-nums;
+  width: max-content;
+  min-width: 100%;
 }
 .rn { color: var(--dim); text-align: right; padding: 2px 8px; }
 .cell {

@@ -28,10 +28,11 @@
  *   scheduler sees the new hit, and the new sample starts on the row.
  *   That is the original player's behaviour, kept on purpose.
  *
- * FMVoice in fm-voice.js implements the same three calls for the audition
- * synth. The pattern scheduler does not use it yet. Its noteOn retriggers
- * internally with a 5 ms fade; a cut at the same timestamp would cancel the
- * new note, so callers leave the fade to noteOn.
+ * FMVoice in fm-voice.js implements the same three calls. Drum channels do
+ * not use it. A layer channel does: a rest posts nothing, so the envelope
+ * holds, "===" is noteOff, and a new note retriggers inside the worklet
+ * with a 5 ms fade. A cut at the same timestamp would cancel that note, so
+ * the scheduler does not cut a layer voice before noteOn.
  */
 
 export const NOTE_OFF = "===";
